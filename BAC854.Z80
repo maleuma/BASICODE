@@ -1,0 +1,3 @@
+KC3	EQU	0	; Rechnertyp = KC85/4
+DEV	EQU	0	; keine Device-Umschaltung gewaehlt
+INCLUDE	BAC85.Z80

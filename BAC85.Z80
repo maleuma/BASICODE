@@ -1,0 +1,5870 @@
+;---------------------------------------------------------------------
+;	BASICODE 3C Version 1.5 fuer Kleincomputer KC85/4
+;	(C) Andreas und Uwe Zierott	Stand: 31.01.1990
+;	Farbe von Rudolf Wenzel		Stand: 08.12.1992
+;
+; Reassemblerlisting erzeugt mit Reassembler QMR unter CAOS
+; BAC854C.ASM		Adressen: 0401 bis 256A
+;
+; M. Leubner		03.04.2023 bis 19.04.2023
+;---------------------------------------------------------------------
+;
+; Modifikationen:
+; 11.11.2023:
+;	- GOSUB 280 (Aus- bzw. Einschalten der STOP/BRK-Taste FR = 0 bzw. 1)
+;	  deaktiviert, dadurch keine Kopie der KTAB mehr erforderlich
+;	- Copyright-Texte angepasst, Versionsnummer 1.5a eingetragen
+;	- Arbeitszellen so verlagert, dass 0000-000Fh frei bleibt fuer USB
+;	  (00AE-00E0h ist bereits unberuehrt weil KTAB nicht mehr kopiert wird)
+;	- einige Variablen umbenannt
+;	- unnuetze NOP-Befehle entfernt
+;	- GOSUB 220 kann jetzt auch aus Bild 1 Zeichen lesen
+;	- Codeoptimierung (CALL x, RET ersetzt durch JP x)
+;	- Codeoptimierung, indem alle gepatchten Spruenge der Farberweiterung
+;	  direkt in den Originalcode verschoben wurden (vermutlich hat R. Wenzel
+;	  auch keinen Quelltext gehabt und das Programm nur zum Teil uebersetzt)
+;	- 80 freie Bytes zwischen Grundprogramm und Farberweiterung geloescht
+;	Druckertreiber:
+;	- Modulsuche vorwaerts ab Steckplatz 7 (vorher rueckwaerts von 0 bis 1)
+;	- eingeschaltetes M003 wird jetzt auch im Steuerbytespeicher eingetragen
+;
+;	Version 1.5a veroeffentlicht
+;
+; 12.11.2023:
+;	- Idee1: Statt KTAB das UP KBDS ueber die SUTAB modifizieren.
+;	  Funktioniert aber nicht, da KBDS innerhalb von BASPV direkt benutzt
+;	- Idee2: KTAB auf Adresse E0-15Fh kopiert und GOSUB 280 wieder aktiviert
+;	  Funktioniert auch nicht richtig, da ubasex des M052 die Adressen
+;	  von 00BE bis 00FFh belegt (Systemabsturz bei CAOS 4.2)
+; 13.11.2023:
+;	- JP IRMOFF wieder ersetz durch CALL IRMOFF, RET (sonst Absturz)
+;	- Kaltstart setzt nun Nullbytes fuer Programmanfang korrekt
+; 16.11.2023:
+;	- Standardfarbe geaendert von Tuerkis/rot auf gelb/blau
+DEFCOL	EQU	31H		; gelb auf blau (Original 2AH tuerkis auf rot)
+;	- Farbe bei Programmstart: weiss/schwarz
+;	- wenn CC() nicht definiert ist -> keine Aenderung der Farben
+; 17.11.2023:
+;	- Unterprogramm U1F3B aufgeloest und direkt eingebaut (nur 1x verwendet)
+;	- Farbwert bei Textanzeige im Grafikmode direkt aus CAOS-Arbeitszelle
+;	  lesen, statt Programmcode bei U1F25 zu modifizieren
+;	- Grafikfarbe bei Initialisierung nicht voreinstellen, wird vom Titel-
+;	  bild (Schallplatte) ohnehin ueberschrieben
+; 19.11.2023:
+;	- GOSUB 620, GOSUB 630 und GOSUB 650 Sprung entfernt (Patch?)
+;	- Grafikfarbe in FARB speichern und nicht mehr Programmcode modifizieren
+;	- Code fuer Punkt/Linie zusammengefasst, Aufruf ueber PV3 + Register E
+;
+;	Version 1.5b veroeffentlicht
+;
+; 21.11.2023:
+;	- Version fuer KC85/3 in Vorbereitung nach BAC853C.SSS (Version 1.6)
+;	  * schnelle CLS-Routine
+;	  * VRAM ist immer B200H
+;	  * Punkt setzen/loeschen mit PUSE/PUDE
+; 18.12.2023:
+;	- Stack in 0B7CBH eintragen fuer Kompatibilitaet zu CAOS 3.4 und OS/pi
+;	- Zeichenzaehler A' retten beim Konvertieren BASIC -> ASCII fuer
+;	  Kompatibilitaet zu OS/pi (IRMON/OFF veraendert A')
+;	- Vortonlaenge beim KC-Format generell auf 400H gesetzt
+;	- IRM-Adresse fuer letzte Zeile links/unten rechnerspezifisch
+;	- Inversdarstellung KC85/3 fuer GOSUB 150 implementiert
+;	- Linien-Routine fuer KC85/3 implementiert
+;	- Test auf "schwaches Kassetteninterface" wieder eingebaut
+;	  (war nur noch in KC85/3-Version drin, Text aber in beiden Versionen)
+;	- Zeichen malen bei U09DD fuer KC85/3 implementiert
+; 20.12.2023:
+;	- Text im Grafikmodus (GOSUB 650) implementiert fuer KC85/3
+;	  Test mit "Tuerme von Hanoi": OK
+;	- FLOAD-Menuewort wird jetzt bei Initialisierung mit geloescht
+; 22.12.2023:
+;	- CN in Grafikfarbe einbauen bei UP Punkt/Linie am KC85/3
+; 23.12.2023:
+;	- GOSUB 150: Farbe aus CC(0/1) wird nicht mehr uebernommen
+;	- GOSUB 650: Farbebene nur noch schreiben, wenn Pixelebene Inhalt hat
+; 26.12.2023:
+;	- HEX-Ausgabe fuer Blocknummernanzeige optimiert
+;	- Anzeige "Speicher voll" verschoben und damit Sprungbefehl eingespart
+;	- U1671 und U17D7 verschoben und damit je einen Sprungbefehl eingespart
+;	- U1AAE verschoben, ein Sprungbefehl eingespart, 2x JP in JR verwandelt
+;	- U09AC (SCF,RET) an andere Stelle gelegt und 2 Byte gespart
+;
+;	Version 1.5c veroeffentlicht
+;
+;	- Dateiname wird bei ISRI und ISRO nicht in HL uebergeben
+;	- Die Datenfiles enthalten als erstes 3x UUU, dann 8 Zeichen fuer den
+;	  Dateinamen und noch ein 00h. Erst danach beginnen die Nutzdaten.
+;	  Das ist fuer USB/DISK nicht sinnvoll und waere bei Nutzung von
+;	  MBIN/MBOUT nicht der Fall. Besser also gleich auf MBIN/MBOUT umstellen
+;	  dann waere eventuell auch BASEX nutzbar.
+; 27.12.2023:
+;	- Beim Schreiben auf Kassette landet man im CAOS beim PRINT nach CLOSE
+;	  Ursache ist der Aufruf von CSRO ohne vorheriges ISRO.
+;	  (CSRO setzt OUTAB und WEND auf die gespeicherten Werte von ISRO)
+;	  Das Problem tritt nicht auf, wenn zuvor mit LOAD/CLOAD Daten von
+;	  Kassette geladen wurden - wie es frueher noetig war.
+;	  -> CAOS 4.9 initialisiert nun zur Sicherheit ZOTAB und ZWEND
+; 28.12.2023:
+;	- U09B7 (untere Bildschirmzeile nach U0000 kopieren) direkt eingebaut
+;	- Dateiname mit "UUU12345678" vorbereiten fuer MBIN/MBOUT
+; Umstellung von ISRI/MBI/CSRI auf MBIN:
+;	- Oeffnen: HL=Dateiname, D=08H
+;	  MBIN uebergibt beim Oeffnen bereits das erste Datenbyte. Das wird hier
+;	  in U0047 gespeichert, und beim folgenden Lesen dem Puffer entnommen
+;	- Lesen: D=0		PA: A=Datenbyte		CY=1 bei Fehler
+;	- Schliessen: D=40H
+; Umstellung von ISRO/MBO/CSRO auf MBOUT:
+;	- Oeffnen: HL=Dateiname, D=08H
+;	  MBOUT erwartet beim Oeffnen bereits das erste Datenbyte. Hier kann
+;	  also das Oeffnen vorerst nur gemerkt werden. Beim nachfolgenden
+;	  ersten Schreiben wird dann 1x D=8 mitgegeben.
+;	- Schreiben: D=0, A=Datenbyte			CY=1 bei Fehler
+;	- Schliessen: D=40H
+; 29.12.2023:
+;	- Dateiname des Datenfiles auf *.DDD (statt *.UUU geaendert)
+;	- BASEX/UBASEX setzt bei UMBOUT Bit 0(IX+8), um das Verify von CAOS
+;	  abzuwaehlen -> Nach Close das Bit wieder loeschen
+;	- TAPE: CAOS 3.1 macht 8 Sekunden Vorton, CAOS 4.9 ca. 4 Sekunden
+;	  -> laesst sich nicht vermeiden
+;	- CAOS 3.1: Blocknummernunterdrueckung funktioniert nicht bei Ein/Ausgabe
+;	  ueber USB (in M052-Software zu korrigieren)
+;	  ueber TAPE - nicht zu aendern, weil direkt in CAOS programmiert
+;	- CAOS 3.1 mit USB-Treiber schreibt nur 128 Byte, CAOS 4.9 256 Byte
+;	  Der Unterschied liegt am USB-Treiber (M052-Software/CAOS-Treiber)
+;	  Bei TAPE werden mindestens zwei Bloecke benoetigt, der Vorblock mit
+;	  dem Dateinamen und der Endeblock.
+; 30.12.2023:
+;	- zwei sinnlose Befehle nach U1AB5 auskommentiert
+;	- Die eigene Routine U04C3 (Spung zu IOERR) war zwar enthalten, aber
+;	  sinnlos, da diese nur von MBIN/MBOUT verwendet wurde, BASICODE 1.5
+;	  aber stattdessen MBI/MBO verwendet hat. Füer die neue Version mit
+;	  MBIN/MBOUT aber durchaus erforderlich.
+;	- Setzen von U04C3 als IO-ERROR-Routine verschoben zu WARM1, damit das
+;	  im Direktmode regeneriert wird
+;	- Neue Fehlerbehandlungsroutine fuer RUN-Mode, welche bei BASEX/UBASEX
+;	  nur das CY-Flag gesetzt zurueck gibt und nicht zu IOERR in den BASIC-
+;	  ROM springt. Getestet mit UBASEX unter CAOS 3.1 und CAOS 4.2
+; 02.01.2024:
+;	- kein CLS mehr bei GOTO 20, nur noch bei GOSUB 100 und 600
+;	- KTAB2 in Programm integriert und GOSUB 280 wieder aktiviert
+; 03.01.2024:
+;	- Absturz bei *L unter CAOS 3.4 behoben, dabei die Sonderbehandlung
+;	  der *-Sonderkommandos ueberarbeitet
+;	- CLS bei GOTO 20 wieder eingebaut
+; 04.01.2024:
+;	- DEVICE-Umschaltung auswaehlbar gemacht
+;		KC85/3-Version
+;		KC85/4-Version ohne DEVICE-Umschaltung
+;		KC85/5-Version mit DEVICE-Umschaltung
+;	- Test KTAB-Umschaltung BRK/STOP
+;
+;	Version 1.5d veroeffentlicht
+;
+;---------------------------------------------------------------------
+.XLIST
+;---------------------------------------------------------------------
+;		LISTE DER GOSUB-Routinen von BASICODE			     BASICODE
+;GOTO 20   Programmstart, System-Reset, Loeschen aller Variablen		3/3C
+;
+;GOSUB 100 Loeschen des Bildschirms						2
+;GOSUB 100 Initialisieren des Textmodus, Loeschen des Bildschirms		3/3C
+;
+;GOSUB 110 Setzen des Cursors an eine bestimmte Position			2
+;          Uebergabe der Position in den Variablen HO und VE
+;          (inoffiziell: Uebernahme der Farbe aus CC)				3C
+;
+;GOSUB 120 Ermittlung der Position des Cursors					2
+;          Rueckgabe der Position in den Variablen HO und VE
+;
+;GOSUB 150 Auffaelliges Anzeigen eines Strings auf dem Bildschirm		3/3C
+;          (links und rechts drei Leerzeichen)
+;          Uebergabe des Strings in der Variablen SR$
+;
+;GOSUB 200 Auslesen eines Tastendrucks						2
+;          Rueckgabe des Zeichens in der Variablen IN$
+;          Rueckgabe einer leeren Variablen IN$, wenn keine Taste gedrueckt
+;          wurde
+;
+;GOSUB 210 Warten auf einen Tastendruck						2
+;          Rueckgabe des Zeichens in der Variablen IN$
+;
+;GOSUB 220 Auslesen eines Zeichens vom Bildschirm				3/3C
+;          Uebergeben der Bildschirmposition in den Variablen HO und VE
+;          Rueckgeben des Zeichens als numerischer Wert in der Variablen IN
+;
+;GOSUB 250 Ausgabe eines einfachen kurzen Tons ("Beep")				2
+;
+;GOSUB 260 Ermittlung einer Zufallszahl zwischen 0 und 1			2
+;          Rueckgabe der Zahl in der Variablen RV
+;
+;GOSUB 270 Ermittlung der Groesse des freien Speichers				2
+;          Rueckgabe des Wertes in der Variablen FR
+;
+;GOSUB 280 Aus- bzw. Einschalten der STOP/BREAK-Taste				3/3C
+;          Uebergabe des gewuenschten Status in der Variablen FR
+;          (FR=0 bzw. FR=1)
+;
+;GOSUB 300 Umwandlung eines numerischen Wertes in einen String			2
+;          Uebergabe des numerischen Wertes in der Variablen SR
+;          Rueckgabe des Strings in der Variablen SR$
+;
+;GOSUB 310 Analog zu GOSUB 300, zusaetzliche Angaben:				2
+;          Uebergabe einer festen Stringlaenge in der Variablen CT
+;          Uebergabe der Position des Dezimalpunkts in der Variablen CN
+;
+;GOSUB 330 Umwandlung alle Kleinbuchstaben in einem String in Grossbuchstaben	3/3C
+;          Uebergabe und Rueckgabe des Strings in der Variablen SR$
+;
+;GOSUB 350 Ausgabe eines Strings auf dem Drucker				2
+;          Uebergabe des Strings in der Variablen SR$
+;
+;GOSUB 360 Ausgabe eines Zeilenumbruchs auf dem Drucker				2
+;
+;GOSUB 400 Ausgabe eines Tons							3/3C
+;          Uebergabe der Lautstaerke, Dauer und Tonhoehe in den Variablen SV, SD
+;          und SP
+;
+;GOSUB 450 Warten einer bestimmten Zeit auf einen Tastendruck			3/3C
+;          Uebergabe der Dauer in der Variablen SD (in 100ms-Einheiten)
+;
+;GOSUB 500 Oeffnen einer Datei							3/3C
+;          Uebergabe des Namens in der Variablen NF$
+;          Festlegung eines Datei-Identifiers in der Variablen NF
+;
+;GOSUB 540 Lesen eines Strings aus einer Datei					3/3C
+;          Uebergabe des Identifiers in der Variablen NF
+;          Rueckgabe des Strings in der Variablen IN$
+;
+;GOSUB 560 Schreiben eines Strings in eine Datei				3/3C
+;          Uebergabe des Identifiers in der Variablen NF
+;          Uebergabe des Strings in der Variablen SR$
+;
+;GOSUB 580 Schliessen einer Datei						3/3C
+;          Uebergabe des Identifiers in der Variablen NF
+;
+;GOSUB 600 Initialisieren des Grafikmodus, Loeschen des Bildschirms		3/3C
+;
+;GOSUB 620 Setzen eines Punktes							3/3C
+;          Uebergabe der Position in den Variablen HO und VE
+;          Uebergabe der Farbe in der Variablen CN
+;
+;GOSUB 630 Zeichnen einer Linie ausgehend von der aktuellen Grafikposition	3/3C
+;          Uebergabe des Endpunktes in den Variablen HO und VE
+;          Uebergabe der Farbe in der Variablen CN
+;          Festlegen der Grafikposition gegebenenfalls vorher durch das Setzen
+;          eines Punktes
+;
+;GOSUB 650 Ausgabe einer Zeichenkette im Grafikmodus				3/3C
+;          Uebergabe der Position in den Variablen HO und VE
+;          Uebergabe der Zeichenkette in der Variablen SR$
+;          CN=0: zeichnen, CN=1: loeschen
+;          (inoffiziell: Uebernahme der Farbe aus CC)
+;
+;GOTO 950  Beenden des BASICODE-Programms					3/3C
+;
+;---------------------------------------------------------------------
+
+; Macro zum Erzeugen der hexadezimalen Adressen CALL*....
+
+ASCTXT	MACRO	X
+	IF	X > 0FFFH
+	 IF	(X/1000H AND 0FH) > 9
+		DB	(X/1000H AND 0FH) + 37H
+	 ELSE
+		DB	(X/1000H AND 0FH) + 30H
+	 ENDIF
+	ENDIF
+
+	IF	(X/100H AND 0FH) > 9
+		DB	(X/100H AND 0FH) + 37H
+	ELSE
+		DB	(X/100H AND 0FH) + 30H
+	ENDIF
+
+	IF	(X/10H AND 0FH) > 9
+		DB	(X/10H AND 0FH) + 37H
+	ELSE
+		DB	(X/10H AND 0FH) + 30H
+	ENDIF
+
+	IF	(X AND 0FH) > 9
+		DB	(X AND 0FH) + 37H
+	ELSE
+		DB	(X AND 0FH) + 30H
+	ENDIF
+
+	ENDM
+.LIST
+;---------------------------------------------------------------------
+
+LF	EQU	0AH
+CR	EQU	0DH
+ESC	EQU	1BH
+
+; Portadressen
+
+PIOAD	EQU	88H	; System-PIO Datenbyte Port A
+			;	Bit 0 - CAOS ROM-E ein/aus
+			;	Bit 1 - RAM0 ein/aus
+			;	Bit 2 - IRM ein/aus
+			;	Bit 3 - Schreibschutz RAM0
+			;	Bit 4 - K_OUT
+			;	Bit 5 - System-LED
+			;	Bit 6 - Motorschaltspannung
+			;	Bit 7 - USER-ROM ein/aus
+PIOBD	EQU	89H	; System-PIO Datenbyte Port B
+			;	Bit 0 - Symmetrie-Flip-Flop Tonausgabe
+			;	Bit 1 \
+			;	Bit 2 - Lautstaerke Tonausgabe
+			;	Bit 3 - 4 Bit (Low-aktiv)
+			;	Bit 4 /
+			;	Bit 5 - RAM8 ein/aus
+			;	Bit 6 - Schreibschutz RAM8
+			;	Bit 7 - Blinken ein/aus
+PIOAS	EQU	8AH	; System-PIO Steuerbyte Port A
+CTC0	EQU	8CH	; CTC Kanal 0 (Tonhoehe 1)
+CTC1	EQU	8DH	; CTC Kanal 1 (Tonhoehe 2, Kassettenausgabe)
+CTC2	EQU	8EH	; CTC Kanal 2 (Tondauer)
+
+;	*********************************
+;	*  Arbeitszellen von BASICODE	*
+;	*********************************
+;
+; Original:	0000H bis 00CEH bzw. 00CFH mit KTAB-Kopie
+; => nicht vertraeglich mit M052 USB-Tastatur und DEVICE-Treiber !!!
+;
+; neue Belegung:
+; 0000-000FH	belegt von USB-Software
+; 0010-0037H	ASCII-Speicher fuer eine Bildschirmzeile
+; 0038-003AH	RST38-Meldung Systemabsturz
+; 003BH		FLAGS (nicht verschieben!!!)
+; 003C-005EH	23 Byte BASICODE-Arbeitszellen
+; 005F-00ADH	79 Byte frei
+; 00AE-00E0H	USB-Interruptroutine
+; 00E1-014FH	111 Byte frei
+; 00D8-014FH	UBASEX: Zusatzroutinen wie DIENST.KCC (nicht nutzbar!)
+; 0150-016FH	BASEX/UBASEX: Umschaltroutine CALL*150
+; 0170-01C3H	84 Byte Stack
+; 01C4-01FFH	ISR-Tabelle und IX-Arbeitszellen
+; 0200-02FFH	BASEX/UBASEX und modifizierte SUTAB
+; 0300-03FFH	WORKRAM von BASIC
+
+; 11.11.2023 Arbeitszellen erst ab Adresse 0010H und nur bis 005EH
+
+U0000	EQU	0010H		; Zwischenspeicher fuer Magnetbandroutinen
+	;   bis 0037H		; 40 Zeichen = eine Bildschirmzeile
+
+U0038	EQU	0038H		; JUMP von RST 38
+U0039	EQU	0039H		; Adresse von RST 38
+
+; Adresse FLAGS=003BH nicht verlegen (wird vom Fullscreen-Editor ausgewertet)
+FLAGS	EQU	003BH		; Bit0=1 Uebersetzung ASCII -> BASIC
+				; Bit1=1 ASCII-File im Speicher
+				; Bit3=1 Init bei Kassettenein- und ausgabe
+				; Bit6=1 unerlaubter BASICODE-Befehl
+				; Bit7=1 Regelverstoss
+
+XPOS2	EQU	003CH		; X-Position (Linie X-Ende)
+				; auch Zwischenspeicher fuer OUTAB
+YPOS2	EQU	003EH		; Y-Position (Linie Y-Ende)
+XPOS1	EQU	0040H		; aktuelle Grafikposition (Linie X-Anfang)
+YPOS1	EQU	0042H		; aktuelle Grafikposition (Linie Y-Anfang)
+CN	EQU	0044H		; "Color Numerisch"	CN=0 zeichnen
+				; (GOSUB 620/630/650)	CN=1 loeschen
+U0031	EQU	0045H		; Beginn ASCII-File
+U0033	EQU	0047H		; Ende ASCII-File
+CPOINT	EQU	0049H		; Zeiger in Kassettenpuffer bei Dateiarbeit
+BLNR	EQU	004BH		; erwartete Blocknummer
+U003C	EQU	004CH
+U003D	EQU	004DH		; Merker fuer Interruptroutine PIO A
+U003F	EQU	004FH		; Merker fuer Interruprroutine CTC1 oder CTC2
+U0041	EQU	0051H		; Zwischenspeicher fuer UOUT1
+				; Zeilennummer bei Konvertierung BASIC -> ASCII
+U0043	EQU	0053H		; Bit0=1 Dateiende (Kassetteneingabe) erkannt
+U0044	EQU	0054H		; FFH = Abbruch beim BASICODE Lesen/Schreiben
+U0045	EQU	0055H		; Bit gesetzt fuer geoeffnete BASICODE-Kanaele
+				; je ein Bit fuer NF=0 bis NF=7
+U0046	EQU	0056H		; verwendet bei BASICODE-Bestand lesen/schreiben
+U0047	EQU	0057H		; letztes gelesenes Datenbyte (Kassetteneingabe)
+U004A	EQU	005AH		; Zaehlwert fuer BASICODE-Bandeingabe
+U004C	EQU	005CH		; IRM-Adresse fuer malen auf unterer Bildschirmzeile
+U004E	EQU	005EH		; Merkzelle fuer die Original-KTAB von CAOS
+FNAME	EQU	0060H		; 11 Byte Dateiname fuer Kassettenroutinen
+;	bis	006AH
+;KTAB2	EQU	004FH		; Kopie der Tastaturtabelle KTAB
+;	;   bis 00CEH		; 11.11.2023: nicht mehr benutzt
+
+U01F0	EQU	001F0H		; (IX+0) Zeitkonstante Kassettenroutinen
+U01F2	EQU	001F2H		; (IX+2) Blocknummer Kassettenroutinen
+
+; WORKRAM von BASIC:
+
+DUMMY	EQU	0340H		; Anzahl der Dummy-Zeichen: NULL n
+AUTOFG	EQU	034DH		; AUTO-Flag (automatische Zeilennummerierung)
+STDPTR	EQU	0356H		; RAM-Mindestgroesse (KC85/3=7EFF KC85/4=BEFF)
+CULINO	EQU	0358H		; aktuelle Zeilennummer
+DATBYT	EQU	035DH		; Kopierschutz, wenn ungleich 0
+PSTBEG	EQU	035FH		; Programmstart-Adresse (normal 0401H)
+INPBUF	EQU	0361H		; Editierpuffer
+DATYPE	EQU	03AEH		; Datentyp
+SVARPT	EQU	03D7H		; Programmende + 1
+DVARPT	EQU	03D9H		; Adresse Feldvariablen
+FSLPTR	EQU	03DBH		; Erste freie Adresse nach den Variablenlisten
+WRA1	EQU	03E5H		; Arithmetikregister 1
+
+; Arbeitszellen im IRM:
+
+ARGN	EQU	0B781H	; Anzahl Argumente
+ARG1	EQU	0B782H	; Argument 1
+ARG2	EQU	0B784H	;    "	   2
+ARG3	EQU	0B786H	;    "	   3
+ARG4	EQU	0B788H	;    "	   4
+NUMNX	EQU	0B796H	; Zeichenanzahl einer erfassten Zahl
+			; hier genutzt als Zwischenspeicher Farbe bei GOSUB 150
+HCADR	EQU	0B799H	; Hardcopy-Aufruf
+WINON	EQU	0B79CH	; Fenster-Anfang
+WINLG	EQU	0B79EH	; Fenster-Groesse
+CURSO	EQU	0B7A0H	; Cursor-Position
+COLOR	EQU	0B7A3H	; Farbe
+CCTL0	EQU	0B7A6H	; Zeichentabelle 0 20H...5FH
+CCTL1	EQU	0B7A8H	;	"	 1 00H...1FH und 60H...7FH
+OUTAB	EQU	0B7B9H	; Adresse fuer Zeiger auf UP-Nr. bei Ausgabe
+INTAB	EQU	0B7BBH	; Adresse fuer Zeiger auf UP-Nr. bei Eingabe
+UOUT1	EQU	0B7BDH	; Sprung zu USER-Ausgabekanal 2 (Druckerausgabe)
+UIN2	EQU	0B7C6H	; Sprung zu USER-Eingabekanal 3 V.24-duplex
+IO_ERR	EQU	0B7C9H	; Reaktionsprogramm fuer BASIC I/O-Error bis CAOS 4.7
+VRAM	EQU	0B7CBH	; VRAM-Adresse des eingestellten Bildes
+HOR	EQU	0B7D3H	; Grafik Horizontalposition (X-Wert)
+VERT	EQU	0B7D5H	; Grafik Vertikalposition (Y-Wert)
+FARB	EQU	0B7D6H	; Grafik Farbe
+		; Bit 0=1	XOR-Funktion
+		; Bit 1=1	Punkt loeschen
+		; Bit 2=1	Farbebene nicht veraendern
+		; Bit 3-7	Vordergrundfarbe + Blinken
+FNDEF	EQU	0B900H	; Funktionstastenspeicher (bis B99BH)
+
+; Adressen aus dem BASIC-ROM:
+
+SECST	EQU	0C08CH	; RESTART BASIC-Interpreter
+OMER	EQU	0C33EH
+EDITO2	EQU	0C3FEH
+ZPOIT	EQU	0C4BBH
+TEXTOE	EQU	0C5F1H
+CPREG	EQU	0C689H	; Vergleiche Register DE mit HL
+LIST9	EQU	0C767H	; LIST: Stop nach vorgegebener Zeilenanzahl
+LCREG	EQU	0C791H
+LIST11	EQU	0C79AH	; Token aufloesen
+TCHAR	EQU	0C8BDH	; naechstes gueltiges Zeichen holen
+RESTO	EQU	0C8DFH
+STOP	EQU	0C918H
+END0	EQU	0C91BH
+EPRVL3	EQU	0C96FH	; Ausdruck berechnen -> DE
+CLEAR	EQU	0C9AAH
+CRWDY2	EQU	0CB61H	; Anzeige CR, LF, Dummyzeichen
+DIM7	EQU	0CF48H	; Adresse einer Variablen holen -> DE
+FRE	EQU	0D090H
+FRE3	EQU	0D0B1H
+POS1	EQU	0D0C0H
+STROP	EQU	0D1E1H
+ADD5	EQU	0D46FH
+MUL1	EQU	0D59AH
+DIV1	EQU	0D5F5H
+TSGNM	EQU	0D697H
+SGN1	EQU	0D6AEH
+ABS	EQU	0D6BCH
+ABS1	EQU	0D6C0H
+OPARST	EQU	0D6C8H
+OPKOP	EQU	0D6DDH	; Wert in Arithmetikregister 1 laden
+OPLAD	EQU	0D6EEH
+OPTRAN	EQU	0D6F7H
+NUMBO	EQU	0D829H
+NUMBO1	EQU	0D82AH
+NUMKON	EQU	0D834H
+EXPO	EQU	0D928H
+RND	EQU	0D9FDH
+IOERR	EQU	0DC82H
+CASS01	EQU	0DCB0H	; *.SSS Name holen
+CSAVE0	EQU	0DD57H	; BASIC-Programm abspeichern
+CO	EQU	0DDD5H
+
+; CAOS-Vereinbarungen:
+
+PV1	EQU	0F003H	; CAOS-UP aufrufen, DB UP-Nummer
+CRT	EQU 00H		; Zeichenausgabe auf Bildschirm
+;MBO	EQU 01H		; Ausgabe Datenblock auf Kassette
+UOT1	EQU 02H		; Ausgabe auf Anwenderkanal 1
+KBD	EQU 04H		; Tastatureingebe mit Cursoreinblendung
+;MBI	EQU 05H		; Datenblock von Kassette einlesen
+USIN2	EQU 07H		; Eingabe von Anwenderkanal 2
+;ISRO	EQU 08H		; Ausgabe 1. Block auf Kassette
+;CSRO	EQU 09H		; Ausgabe letzten Block auf Kassette
+;ISRI	EQU 0AH		; Einlesen 1. Block von Kassette
+;CSRI	EQU 0BH		; Abschluss Magnetbandeingabe
+KBDZ	EQU 0EH		; Tastenstatusabfrage mit Quittung
+LOOP	EQU 12H		; Ruecksprung zu CAOS-Menueschleife
+WAIT	EQU 14H		; Warteschleife
+OSTR	EQU 23H		; Ausgabe folgender Zeichenkette
+OCHR	EQU 24H		; Zeichenausgabe ueber Ausgabetabelle
+PUSE	EQU 30H		; Punkt setzen
+PADR	EQU 34H		; Berechnen Pixel- und Farbadresse
+MBIN	EQU 37H		; Byteweise Eingabe von Kassette
+MBOUT	EQU 38H		; Byteweise Ausgabe auf Kassette
+LINE	EQU 3EH		; Linie zeichnen
+PV3	EQU	0F009H	; CAOS-UP aufrufen, E=UP-Nummer
+PV5	EQU	0F015H	; CAOS-UP aufrufen, E=UP-Nummer, IRM ON/OFF
+IRMON	EQU	0F018H	; IRM einschalten
+IRMOFF	EQU	0F01BH	; IRM abschalten
+
+;---------------------------------------------------------------------
+
+	ORG	0401H-2
+;
+	DW	U256B-0401H	; Dateigroesse BAC854C.SSS
+;
+	DW	U040B		; Zeiger auf naechste Programmzeile
+	DW	10		; Zeilennummer 10
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	U0410		; Kaltstart / Initialisierung BASICODE
+	DB	0		; Zeilenende
+U040B:	DW	0		; BASIC-Programmende
+;
+; Die Warmstart-Adresse wird im Bascoder nicht aufgerufen. Es ist aber im
+; BASICODE-Buch beschrieben, dass z.B. nach einem RESET mit Eingabe von
+; CALL*40D:RUN in das Programm zurueck gelangt werden kann. 
+; Auf der Funktionstaste Shift+F4 liegt ebenfalls "REBASIC CALL*40D"
+;
+U040D:	JP	WARM		; Warmstart BASICODE
+	;
+U0410:	JP	KALT		; Kaltstart BASICODE
+;
+; RST 38H - Systemabsturz melden und zurueck zu CAOS
+;
+U0413:	LD	HL,0E000H	; RESET
+	LD	(U0039),HL	; auf RST 38H eintragen
+	IN	A,(PIOAD)
+	AND	9FH
+	OR	0DH
+	OUT	(PIOAD),A
+	LD	SP,01C4H	; CAOS-System-Stack
+	CALL	PV1
+	DB	OSTR
+	DB	0DH
+	DB	'! Systemabsturz !'
+	DB	CR,LF
+	DB	0
+	CALL	PV1
+	DB	LOOP
+;
+; Initialisierung BASICODE (bei Kaltstart, Warmstart))
+;
+BCINIT:	LD	HL,U0000	; 20.12.2023: ASCII-Zwischenspeicher loeschen
+	LD	DE,U0000+1	; damit wird auch ein evtl. vorhandenes
+	LD	BC,39		; Menuewort von FLOAD geloescht
+	LD	(HL),D		; 0 eintragen
+	LDIR
+	CALL	IRMON
+; 11.11.2023: keine Kopie der KTAB mehr vornehmen
+;	LD	L,(IX+14)	; KTAB
+;	LD	H,(IX+15)	; aktueller Wert
+;	LD	DE,KTAB2
+;	LD	(IX+14),E	; KTAB
+;	LD	(IX+15),D	; Kopie
+;	LD	BC,128
+;	LDIR			; KTAB in RAM kopieren
+;IF KC3
+;	LD	HL,KTAB2+4DH	; Shift-Stop in KTAB
+;	LD	(HL),C		; mit 0 belegen (statt 13H)
+;ENDIF
+	LD	HL,U0C39	; modifizierte Eingaberoutine mit Konverter
+	LD	(UIN2+1),HL
+	LD	HL,U0A7B	; Zeiger auf 07H = USIN2
+	LD	(INTAB),HL	; INTAB umstellen auf USIN2
+	CALL	U09AE		; IRM-Adresse fuer Zeichen links/unten setzen
+	LD	HL,0		; Fenster volle Groesse
+	LD	(WINON),HL
+	LD	(U004A),HL	; Zaehlwert Kassetteneingabe
+	LD	HL,2028H
+	LD	(WINLG),HL
+; 30.12.2023: verschoben zu WARM1, damit das im Direktmode regeneriert wird
+;	LD	HL,U04C3	; eigene Routine fuer
+;	LD	(IO_ERR),HL	; IO-ERROR eintragen
+	LD	A,DEFCOL	; Standardfarbe
+	LD	(COLOR),A	; Farbe einstellen
+; 17.11.2023: Grafikfarbe einstellen hier nicht noetig, da diese beim Zeichnen
+; des Titelbildes (Schallplatte) neu eingetragen wird
+;	AND	78H		; Vordergrundfarbe (ohne Blinken) herausfiltern
+;	LD	(FARB),A	; auch fuer Grafikbefehle eintragen
+	LD	A,7FH		; Blinken aus, volle Lautstaerke, RAM8 ein
+	OUT	(PIOBD),A
+	LD	HL,U0A95	; F-Tastenbelegungen
+	LD	DE,FNDEF	; Funktionstastenspeicher
+	LD	BC,U0AD7-U0A95
+	LDIR			; initialisieren
+	LD	DE,U21F3+2	; Treiber im RAM
+	LD	HL,UBA00+2	; Treiber im IRM
+	CALL	U04B4		; Treiber bereits im IRM?
+	JR	Z,BCINI1	; ja, fertig
+	EX	DE,HL
+	CALL	U04B4		; Treiber noch im RAM verfuegbar?
+	JR	NZ,BCINI1	; nein, nichts mehr da zum Kopieren
+	LD	BC,U256B-U21F3	; Laenge des V.24-Treibers
+	LDIR			; V.24-Treiber kopieren
+	CALL	UBBF5		; V.24-Modul initialisieren
+BCINI1:	JP	IOFRET		; IRM OFF, RET
+;
+; Drucker(?)treiber pruefen:
+;
+U04B4:	PUSH	DE
+	LD	D,(HL)
+	DEC	HL
+	LD	E,(HL)
+	DEC	HL
+	PUSH	HL		; steht ein CALL auf
+	LD	HL,UBAFE	; UBAFE im Speicher?
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	POP	DE
+	RET
+;
+; eigene Routine fuer IO-ERROR (benutzt im Direktmode)
+;
+U04C3:	IN	A,(PIOAD)
+	BIT	2,A		; IRM ein?
+	CALL	NZ,IRMOFF	; bei CAOS 3.1 erst noch den IRM ausschalten!
+	JP	IOERR		; Sprung in BASIC-ROM
+;
+; Fehlerbehandlung im RUN-Mode, setzt nur CY-Flag bei Fehler
+;
+U04C4:	IN	A,(PIOAD)
+	BIT	2,A		; IRM ein?
+	CALL	NZ,IRMOFF	; bei CAOS 3.1 erst noch den IRM ausschalten!
+	SCF			; Fehlerflag setzen
+	POP	HL		; ERROR-Adresse vom Stack nehmen
+	RET			; zurueck zu MBIN bzw. MBOUT
+;
+; Titelbild zeichnen
+;
+TITEL:	CALL	CLS		; Bildschirm loeschen
+	CALL	IRMON
+	LD	A,20H		; Vordergrundfarbe gruen
+	LD	(FARB),A	; Grafikfarbe fuer Linie (Schallplatte)
+	CALL	IRMOFF
+	XOR	A
+	LD	(XPOS2+1),A
+	LD	(XPOS1+1),A
+	LD	(YPOS2+1),A
+	LD	(YPOS1+1),A
+	LD	(CN),A		; CN=0: Linie zeichnen (nicht loeschen)
+; Schallplatte zeichnen
+	LD	HL,U0AD7	; Daten fuer Titelbild
+	LD	B,43		; 43 Linien
+TTL1:	PUSH	BC
+	PUSH	HL
+	LD	A,28H
+	SUB	(HL)
+	LD	(XPOS2),A	; X-Ende
+	INC	HL
+	LD	A,20H
+	SUB	(HL)
+	LD	(YPOS2),A	; Y-Ende
+	INC	HL
+	LD	A,28H
+	SUB	(HL)
+	LD	(XPOS1),A	; X-Anfang
+	INC	HL
+	LD	A,28H
+	SUB	(HL)
+	LD	(YPOS1),A	; Y-Anfang
+	CALL	LINIE		; Linie zeichnen (1. Quadrant)
+	POP	HL
+	PUSH	HL
+	LD	A,27H
+	ADD	(HL)
+	LD	(XPOS2),A	; X-Ende
+	INC	HL
+	LD	A,20H
+	SUB	(HL)
+	LD	(YPOS2),A	; Y-Ende
+	INC	HL
+	LD	A,27H
+	ADD	(HL)
+	LD	(XPOS1),A	; X-Anfang
+	INC	HL
+	LD	A,28H
+	SUB	(HL)
+	LD	(YPOS1),A	; Y-Anfang
+	CALL	LINIE		; Linie zeichnen (2. Quadrant)
+	POP	HL
+	PUSH	HL
+	LD	A,28H
+	SUB	(HL)
+	LD	(XPOS2),A	; X-Ende
+	INC	HL
+	LD	A,1FH
+	ADD	(HL)
+	LD	(YPOS2),A	; Y-Ende
+	INC	HL
+	LD	A,28H
+	SUB	(HL)
+	LD	(XPOS1),A	; X-Anfang
+	INC	HL
+	LD	A,27H
+	ADD	(HL)
+	LD	(YPOS1),A	; Y-Anfang
+	CALL	LINIE		; Linie zeichnen (3. Quadrant)
+	POP	HL
+	LD	A,27H
+	ADD	(HL)
+	LD	(XPOS2),A	; X-Ende
+	INC	HL
+	LD	A,1FH
+	ADD	(HL)
+	LD	(YPOS2),A	; Y-Ende
+	INC	HL
+	LD	A,27H
+	ADD	(HL)
+	LD	(XPOS1),A	; X-Anfang
+	INC	HL
+	LD	A,27H
+	ADD	(HL)
+	LD	(YPOS1),A	; Y-Anfang
+	INC	HL
+	PUSH	HL
+	CALL	LINIE		; Linie zeichnen (4. Quadrant)
+	POP	HL
+	POP	BC
+	DEC	B		; noch eine Linie zu zeichnen?
+	JP	NZ,TTL1		; ja, dann weiter
+;Linie zwischen Schallplatte und TAPE-Signal
+	LD	A,3EH
+	LD	(YPOS2),A
+	ADD	8
+	LD	(YPOS1),A
+	LD	A,49H
+	LD	(XPOS2),A
+	LD	A,29H
+	LD	(XPOS1),A
+	PUSH	HL
+	CALL	LINIE		; Linie von Schallplatte nach rechts
+	POP	HL
+;TAPE-Signal zeichnen
+	LD	C,5		; 5x das gleiche Muster
+TTL2:	PUSH	HL
+	LD	B,12		; 12 Linien
+TTL3:	PUSH	BC
+	PUSH	HL
+	LD	E,(HL)
+	LD	D,0
+	BIT	7,E
+	JR	Z,TTL4
+	DEC	D
+TTL4:	INC	HL
+	LD	C,(HL)
+	LD	HL,(XPOS2)
+	ADD	HL,DE
+	LD	(XPOS2),HL
+	LD	A,(YPOS2)
+	SUB	C
+	LD	(YPOS2),A
+	CALL	LINIE		; Linie zeichnen
+	POP	HL
+	POP	BC
+	INC	HL
+	INC	HL
+	DJNZ	TTL3
+	EX	DE,HL
+	POP	HL
+	DEC	C
+	JR	NZ,TTL2
+;Programmtitel anzeigen
+	EX	DE,HL
+	LD	B,3		; 3 Zeilen
+TTL5:	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; Cursor-Position
+	INC	HL
+	EX	DE,HL
+	CALL	U05E1		; Cursor auf HL setzen
+	EX	DE,HL
+	CALL	TEXTOE		; Textausgabe (im BASIC-ROM)
+	INC	HL
+	DJNZ	TTL5
+	RET
+;
+; Fenster auf volle Groesse einstellen
+;
+U05C5:	CALL	IRMON
+	LD	HL,0		; Fenster volle Groesse
+	LD	(WINON),HL
+	LD	(CURSO),HL
+	LD	HL,2028H
+	LD	(WINLG),HL
+	JP	IOFRET		; IRM OFF, RET
+;
+; GOSUB 100	Initialisieren des Textmodus, Loeschen des Bildschirms
+;
+GO100:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+;
+; Bildschirm loeschen
+;
+IF KC3	; KC85/3-spezifisches schnelles Bildschirmloeschen
+CLS:	CALL	IRMON
+	PUSH	HL
+	LD	HL,8000H	; IRM-Beginn
+	LD	DE,8001H
+	LD	BC,2800H
+	LD	(HL),0
+	LDIR			; Pixel-IRM loeschen
+	LD	B,0AH
+	LD	A,(COLOR)	; Farbe
+	LD	(HL),A
+	LDIR			; Farb-IRM loeschen
+	LD	B,5
+	LD	(HL),0
+	LDIR			; VRAM loeschen
+	LD	(CURSO),BC	; Cursor home
+	POP	HL
+	JP	IOFRET
+ELSE	;Beim KC85/4 ist das normale Bildschirm loeschen schnell genug
+CLS:	LD	A,0CH		; CLS
+	LD	E,OCHR
+	JP	PV5		; CAOS-UP aufrufen, wenn IRM aus ist
+ENDIF
+;
+; GOSUB 150	Auffaelliges Anzeigen eines Strings auf dem Bildschirm
+;		(links und rechts drei Leerzeichen)
+;		Uebergabe des Strings in der Variablen SR$
+;
+GO150:	CALL	IRMON
+	LD	A,(COLOR)	; aktuelle Farbe
+	LD	(NUMNX),A	; hier zwischenspeichern
+	CALL	IRMOFF
+	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	CALL	U1691		; Zeichenkette SR$ holen
+IF KC3
+;
+; Zeichenkette hervorgehoben anzeigen:
+; (2 Leerzeichen davor und dahinter, Zeichenkette selbst + je ein Leerzeichen
+; davor und dahinter invers)
+; PE:	DE	Zeichenkette
+;	B	Anzahl Zeichen
+;
+	CALL	U061F		; 2x Leerzeichen anzeigen
+	CALL	U0630		; nochmal invers anzeigen, danach Zeichenkette
+	CALL	IRMON
+	LD	A,(NUMNX)	; gespeicherte Farbinformation
+	LD	(COLOR),A	; wieder regenerieren
+	JP	IOFRET
+	;
+U05FE:	LD	A,(DE)		; Zeichen aus Zeichenkette
+	INC	DE
+U0630:	PUSH	BC
+	PUSH	DE
+	CALL	IRMON
+	CALL	U20B0		; Zeichen anzeigen und invertieren
+	CALL	IRMOFF
+	POP	DE
+	POP	BC
+	DJNZ	U05FE
+	LD	A,' '		; Leerzeichen
+	CALL	IRMON
+	CALL	U20B0		; Zeichen anzeigen und invertieren
+	CALL	IRMOFF
+U061F:	LD	A,' '		; Leerzeichen
+	CALL	CO		; 1x anzeigen
+	JP	CO		; und noch 1x anzeigen
+;
+; Zeichen anzeigen und invertieren:
+;
+U20B0:	LD	HL,(WINON)
+	LD	DE,(CURSO)
+	ADD	HL,DE		; absolute Position am Bildschirm
+	CALL	PV1
+	DB	CRT		; Zeichen anzeigen
+	SLA	H
+	SLA	H		; Zeile *8
+	SLA	H
+	CALL	PV1
+	DB	PADR		; Pixel-Adresse berechnen
+	PUSH	HL
+	LD	BC,80H		; Offset fuer naechste Zeile
+	CALL	U20CB		; 4 Byte invertieren
+	POP	HL
+	SET	5,L		; dann noch die naechsten 4 Byte
+U20CB:	LD	A,(HL)
+	CPL
+	LD	(HL),A
+	ADD	HL,BC
+	LD	A,(HL)
+	CPL
+	LD	(HL),A
+	ADD	HL,BC
+	LD	A,(HL)
+	CPL
+	LD	(HL),A
+	ADD	HL,BC
+	LD	A,(HL)
+	CPL
+	LD	(HL),A
+	RET
+ELSE
+;
+; Zeichenkette hervorgehoben anzeigen:
+; (2 Leerzeichen davor und dahinter, Zeichenkette selbst + je ein Leerzeichen
+; davor und dahinter invers)
+; PE:	DE	Zeichenkette
+;	B	Anzahl Zeichen
+;
+	LD	HL,U0A8F	; 2 Leerzeichen, invers ein, 1 Leerzeichen
+	CALL	U0608		; 5 Zeichen anzeigen
+	CALL	U0603		; Zeichenkette selbst und invers aus
+	CALL	IRMON
+	LD	A,(NUMNX)	; gespeicherte Farbinformation
+	LD	(COLOR),A	; wieder regenerieren
+	JP	IOFRET
+	;
+U05FE:	LD	A,(DE)		; Zeichen aus Zeichenkette
+	INC	DE
+	CALL	CO		; anzeigen
+U0603:	DJNZ	U05FE
+	LD	HL,U0A90	; 1 Leerzeichen, invers aus, 2 Leerzeichen
+U0608:	LD	C,5
+U060A:	LD	A,(HL)
+	INC	HL
+	CALL	CO
+	DEC	C
+	JR	NZ,U060A
+	RET
+ENDIF
+;
+; Taste gedrueckt?
+;
+U0613:	XOR	A
+	BIT	0,(IX+8)	; Taste gedrueckt?
+	RET	Z		; nein
+	RES	0,(IX+8)	; quittieren
+	LD	A,(IX+13)	; Tastencode abholen
+	OR	A
+	RET
+;
+; Taste quittieren
+; PA:	Z=0	Taste gedrueckt
+;
+U0622:	BIT	0,(IX+8)	; Taste gedrueckt?
+	RET	Z		; nein
+	RES	0,(IX+8)	; quittieren
+	RET
+;
+; Tastaturabfrage, Eingabe ein Zeichen
+; (Aufruf mit IRM ON oder OFF moeglich)
+;	
+U062C:	IN	A,(PIOAD)
+	BIT	2,A		; IRM ein?
+	JR	NZ,U063B
+	PUSH	BC
+	CALL	IRMON		; einschalten
+	PUSH	HL
+	LD	HL,U05F1	; und nach RET wieder ausschalten
+	EX	(SP),HL
+U063B:	PUSH	HL
+	CALL	PV1
+	DB	KBD		; Eingabe ein Zeichen
+	POP	HL
+	RET
+;
+; GOSUB 280	Aus- bzw. Einschalten der STOP/BREAK-Taste
+;		Uebergabe des gewuenschten Status in der Variablen FR (FR=0 bzw. FR=1)
+;
+; 11.11.2023 Funktion entfernt
+; 02.01.2024: wieder aktiviert im KTAB2 im Programmcode
+;
+GO280:	LD	BC,'FR'
+	CALL	DIM7		; Adresse der Variable FR nach DE holen
+	INC	DE
+	INC	DE
+	INC	DE
+	LD	A,(DE)		; Wert holen	A=81H bei FR=1
+	OR	A		;		A=0   bei FR=0
+;
+; BRK/STOP deaktivieren bzw. aktivieren durch Modifikation der KTAB
+; PE:	Z=1	Tasten aktivieren
+;	Z=0	Tasten deaktivieren
+;
+U0642:	LD	HL,KTAB2	; modifizierte KTAB in BASICODE
+	JR	NZ,U064E	; Tasten deaktivieren
+U0643:	LD	HL,(U004E)	; Original-KTAB von CAOS
+U064E:	LD	(IX+14),L
+	LD	(IX+15),H
+	RET
+;
+; Zeichen aus VRAM lesen (fuer GOSUB 220)
+; PE:	H=Zeile, L=Spalte
+; PA:	A=Zeichencode
+;
+U0654:	CALL	IRMON
+	PUSH	HL
+	PUSH	DE
+	XOR	A
+	PUSH	HL
+	LD	L,H		; L=Zeile
+	LD	H,A		; HL=Zeile
+	LD	E,L
+	LD	D,A		; DE=Zeile
+	ADD	HL,HL	; *2
+	ADD	HL,HL	; *4
+	ADD	HL,DE	; *5
+	ADD	HL,HL	; *10
+	ADD	HL,HL	; *20
+	ADD	HL,HL	; *40
+	POP	DE		; E=Spalte
+	LD	D,A		; DE=Spalte
+	ADD	HL,DE		; 40*Zeile + Spalte
+IF KC3
+	LD	DE,0B200H	; VRAM
+ELSE
+	LD	DE,(VRAM)	; VRAM aktuelles Bild (KC85/4)
+ENDIF
+	ADD	HL,DE		; VRAM-Adresse berechnen
+	LD	A,(HL)		; Inhalt von VRAM lesen
+	OR	A		; leer?
+	JR	NZ,U0672
+	LD	A,' '		; 20H statt 00H uebergeben
+U0672:	POP	DE
+	POP	HL
+	JP	IOFRET		; IRM OFF, RET
+;
+; Tonausgabe fuer GOSUB 400
+;
+U0677:	LD	E,A		; Tonhoehe 0..127
+	LD	A,C		; Lautstaerke 0..15
+	AND	0FH		; Wertebereich 0..15
+	JR	NZ,U0681	; Lautstaerke nicht 0
+	LD	A,3		; CTC ruecksetzen
+	JR	U069D
+	;
+U0681:	LD	A,E		; Tonhoehe
+	CP	45
+	JR	C,U068C		; kleiner als 45
+	SUB	45
+	LD	B,7		; Vorteiler 16
+	JR	U0690
+	;
+U068C:	LD	B,27H		; Vorteiler 256
+	ADD	3
+U0690:	LD	D,0
+	LD	E,A		; DE=Tonhoehe
+	LD	HL,U0A3C	; Tabelle der Tonwerte
+	ADD	HL,DE
+	LD	A,(HL)		; Zeitkonstante lesen
+	LD	E,A
+	LD	A,B		; Steuerwort mit VT=16 oder VT=256
+	OUT	(CTC1),A
+	LD	A,E		; Zeitkonstante (Tonhoehe)
+U069D:	OUT	(CTC1),A
+	LD	A,0A7H		; EI, Zeitgeber, VT=256, ZK folgt
+	OUT	(CTC2),A	; Steuerwort fuer Tondauer
+	LD	A,165
+	OUT	(CTC2),A	; Zeitkonstante
+	LD	E,0FH
+	LD	A,C		; Lautstaerke
+	XOR	E		; negieren
+	AND	E		; maskieren 0..15
+	LD	C,A
+	INC	A
+	LD	HL,0BB8H
+U06B1:	LD	E,L
+	LD	D,H
+	LD	B,5		; 5x verschieben
+U06B5:	SRL	D
+	RR	E
+	DJNZ	U06B5
+	ADD	HL,DE
+	DEC	A
+	JR	NZ,U06B1
+	EX	DE,HL
+	PUSH	DE
+U06C1:	POP	HL
+	LD	A,C
+	ADD	A
+	LD	B,61H		; Blinken aus, RAM8 ein
+	OR	B		; mit Lautstaerke kombinieren
+	OUT	(PIOBD),A	; Lautstaerke einstellen
+	LD	E,L
+	LD	D,H
+	LD	B,5
+U06CD:	SRL	D
+	RR	E
+	DJNZ	U06CD
+	ADD	HL,DE
+	EX	DE,HL
+	PUSH	DE
+	LD	A,C
+	XOR	0FH
+	JR	Z,U06DC
+	INC	C
+U06DC:	LD	HL,(U004A)
+	DEC	HL
+	BIT	7,H
+	JR	NZ,U06EB
+	DEC	DE
+	LD	A,D
+	OR	E
+	JR	Z,U06C1
+	JR	U06DC
+	;
+U06EB:	POP	HL
+	LD	A,7FH
+	OUT	(PIOBD),A
+	RET
+;
+; GOSUB 250	Ausgabe eines einfachen kurzen Tons ("Beep")
+;
+GO250:	LD	C,0
+	LD	A,61H		; Blinken aus, RAM8 ein, volle Lautstaerke
+	OUT	(PIOBD),A
+U06F7:	LD	A,5		; Zeitkonstante folgt
+	OUT	(CTC0),A	; Steuerwort
+	LD	A,C		; Zeitkonstante (Tonhoehe 1)
+	OUT	(CTC0),A
+	LD	B,24
+U0700:	DJNZ	U0700		; kurz warten
+	DEC	C
+	JR	NZ,U06F7
+	INC	C
+U0706:	LD	A,5
+	OUT	(CTC0),A
+	LD	A,C
+	OUT	(CTC0),A
+	LD	B,48
+U070F:	DJNZ	U070F		; kurz warten
+	INC	C
+	JR	NZ,U0706
+	LD	A,7FH		; Blinken aus, RAM8 ein, Lautstaerke=0
+	OUT	(PIOBD),A
+	LD	A,3
+	OUT	(CTC0),A	; CTC 1 (Tonhoehe) stoppen
+	RET
+;
+; Zeichen zu Drucker ausgeben
+;
+PRINT:	PUSH	DE
+	LD	E,UOT1
+	CALL	PV5		; CAOS-UP aufrufen, wenn IRM aus ist
+	POP	DE
+	RET
+;
+; GOSUB 620	Setzen eines Punktes
+;		Uebergabe der Position in den Variablen HO und VE
+;		Uebergabe der Farbe in der Variablen CN
+;
+GO620:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	CALL	U1607		; Werte der Variablen HO, VE und CN holen
+	CALL	IRMON
+	LD	HL,(XPOS2)	; X-Position
+	LD	(XPOS1),HL
+	LD	(HOR),HL
+	LD	HL,(YPOS2)	; Y-Position
+	LD	DE,8
+	ADD	HL,DE
+	LD	(YPOS1),HL
+	INC	H
+	DEC	H
+	JR	NZ,IOFRET	; IRM OFF, RET
+	LD	A,L
+	CPL
+	LD	(VERT),A
+	LD	E,PUSE		; 30H = PUSE (Punkt setzen/loeschen)
+; 19.11.2023:
+; Grafikfarbe wird ausschliesslich ueber CAOS-Arbeitszelle FARB ermittelt,
+; keine Modifikation des Programmcodes mehr erforderlich
+GRAF1:	LD	A,(FARB)	; aktuelle Grafikfarbe
+	AND	078H		; nur die Farb-Bits (ohne Blinken)
+	LD	D,A
+	LD	A,(CN)		; 0=zeichnen oder 1=loeschen aus CN
+	ADD	A		; 0=zeichnen oder 2=loeschen
+IF KC3
+	JR	Z,U078A
+	DEC	E		; 2FH = PUDE (Punkt loeaschen)
+U078A:
+ENDIF
+	OR	D		; in Grafikfarbe einbauen
+	LD	(FARB),A	; Grafikfarbe
+	CALL	PV3		; PUSE oder LINE (UP-Nummer in Register E)
+IOFRET:	CALL	IRMOFF
+	RET
+;
+; GOSUB 630	Zeichnen einer Linie ausgehend von der aktuellen Grafikposition
+;		Uebergabe des Endpunktes in den Variablen HO und VE
+;		Uebergabe der Farbe in der Variablen CN (CN=1 Loeschen, CN=0 zeichnen)
+;		Festlegen der Grafikposition gegebenenfalls vorher durch das
+;		Setzen eines Punktes
+;
+GO630:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	CALL	U1607		; Werte der Variablen HO, VE und CN holen
+;
+; Linie zeichnen, hier Einsprung fuer Titelbild
+;
+LINIE:	CALL	IRMON
+	LD	HL,(XPOS1)	; X-Anfang (0=links)
+	LD	(ARG1),HL	; => X-Koordinate Anfangspunkt
+	LD	HL,0FFH
+	LD	DE,(YPOS1)	; Y-Anfang (0=oben!)
+	OR	A
+	SBC	HL,DE		; umrechnen fuer KC-Bildschirm (0=unten!)
+	LD	(ARG2),HL	; Y-Koordinate Anfangspunkt
+	LD	HL,(XPOS2)	; X-Ende
+	LD	(XPOS1),HL	; als neue X-Position eintragen
+	LD	(ARG3),HL	; X-Koordinate Endpunkt
+	LD	HL,(YPOS2)	; Y-Ende (0=oben!)
+	LD	DE,8		; +8
+	ADD	HL,DE
+	LD	(YPOS1),HL	; als neue Y-Position eintragen
+	LD	DE,0FFH
+	EX	DE,HL
+	SBC	HL,DE		; umrechnen fuer KC-Bildschirm (0=unten!)
+	LD	(ARG4),HL	; Y-Koordinate Endpunkt
+IF KC3
+; Linie zeichnen oder loeschen (fuer KC85/3 direkt programmiert)
+	LD	A,(FARB)	; aktuelle Grafikfarbe
+	AND	078H		; nur die Farb-Bits (ohne Blinken)
+	LD	D,A
+	LD	A,(CN)		; 0=zeichnen oder 1=loeschen aus CN
+	ADD	A		; 0=zeichnen oder 2=loeschen
+	OR	D		; in Grafikfarbe einbauen
+	LD	(FARB),A	; Grafikfarbe
+	LD	HL,IOFRET	; IRM OFF, RET
+	PUSH	HL		; nach Linie zeichnen IRM wieder aus
+	LD	HL,(ARG2)	; Y-Koordinate Anfangspunkt
+	LD	DE,(ARG4)	; Y-Koordinate Endpunkt
+	EXX
+	LD	HL,(ARG1)	; X-Koordinate Anfangspunkt
+	LD	DE,(ARG3)	; X-Koordinate Endpunkt
+LIN1:	XOR	A
+	SBC	HL,DE
+	JP	P,LIN2
+	ADD	HL,DE
+	EX	DE,HL
+	EXX
+	EX	DE,HL
+	EXX
+	JR	LIN1
+	;
+LIN2:	EXX
+	PUSH	DE
+LIN3:	SBC	HL,DE
+	JP	P,LIN4
+	ADD	HL,DE
+	EX	DE,HL
+	OR	1
+	JR	LIN3
+	;
+LIN4:	PUSH	HL
+	EXX
+	POP	BC
+	PUSH	HL
+	SBC	HL,BC
+	POP	HL
+	PUSH	BC
+	JP	P,LIN5
+	EX	(SP),HL
+	OR	2
+LIN5:	PUSH	HL
+	LD	B,H
+	LD	C,L
+	EXX
+	POP	BC
+	POP	DE
+	LD	H,B
+	LD	L,C
+	SRL	H
+	RR	L
+	EXX
+	POP	HL
+	EX	DE,HL
+LIN6:	CALL	U0840
+LIN7:	EXX
+	AND	A
+	SBC	HL,DE
+	JR	NC,LIN8
+	ADD	HL,BC
+LIN8:	EXX
+	BIT	1,A
+	JR	NZ,LIN9
+	INC	HL
+	JR	NC,LIN11
+	AND	A
+LIN9:	BIT	0,A
+	INC	DE
+	JR	Z,LIN10
+	DEC	DE
+	DEC	DE
+LIN10:	JR	NC,LIN11
+	INC	HL
+LIN11:	EX	AF,AF'
+	LD	A,B
+	OR	C
+	RET	Z
+	DEC	BC
+	EX	AF,AF'
+	JR	LIN6
+;
+; UP1 fuer Linie
+;
+U0840:	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	PUSH	AF
+	CALL	U0875
+	JR	C,U0865		; raus
+	PUSH	DE
+	LD	DE,(FARB)
+	BIT	0,E		; XOR-Funktion?
+	JR	NZ,U086F
+	BIT	1,E		; Loeschen?
+	JR	NZ,U086A
+	OR	(HL)		; Punkt setzen
+U0858:	POP	DE
+	LD	(HL),A
+	LD	A,(FARB)	; neue Grafikfarbe
+	AND	0F8H		; nur Vordergrund
+	LD	B,A
+	LD	A,(DE)		; aktuelle Farbe
+	AND	7		; Hintergrund erhalten
+	OR	B		; neuen Vordergrund einbauen
+	LD	(DE),A		; Fabe schreiben
+U0865:	POP	AF
+	POP	BC
+	POP	DE
+	POP	HL
+	RET
+	;
+U086A:	CPL
+	AND	(HL)		; Punkt loeschen
+	LD	(HL),A
+	POP	DE
+	JR	U0865
+	;
+U086F:	XOR	(HL)		; Punkt alternieren
+	JR	U0858
+;
+; UP2 fuer Linie
+;
+U0875:	LD	A,L
+	AND	7
+	SRL	H
+	RR	L
+	SRL	H
+	RR	L
+	SRL	H
+	RR	L
+	LD	BC,BITTAB	; Bit-Tabelle
+	ADD	C
+	LD	C,A
+	LD	A,D
+	ADD	0FFH
+	RET	C
+	XOR	E
+	LD	H,A
+	LD	A,(BC)
+	PUSH	AF
+	LD	A,L
+	CP	20H
+	JR	NC,U08B9
+	ADD	A
+	ADD	A
+	ADD	A
+	LD	L,H
+	SRL	H
+	SRL	H
+	SCF
+	RR	H
+	RRA
+	SRL	H
+	RRA
+	LD	D,H
+	SCF
+	RR	D
+	SET	3,D
+	LD	E,A
+	RR	E
+	RR	L
+	RRA
+	RR	L
+	LD	L,A
+	RL	H
+	POP	AF
+	AND	A
+	RET
+	;
+U08B9:	CP	28H
+	JR	NC,U08EF
+	PUSH	BC
+	AND	7
+	ADD	A
+	LD	L,A
+	LD	A,H
+	RLCA
+	LD	B,A
+	AND	1
+	OR	0B0H
+	LD	D,A
+	LD	A,B
+	RLCA
+	LD	C,A
+	AND	3
+	OR	50H
+	LD	B,H
+	LD	H,A
+	LD	A,B
+	AND	30H
+	OR	L
+	LD	L,A
+	LD	A,C
+	RLCA
+	RLCA
+	AND	0C0H
+	OR	L
+	LD	L,A
+	RR	B
+	RR	L
+	RR	B
+	RL	H
+	RR	C
+	RRA
+	LD	E,A
+	POP	BC
+	POP	AF
+	AND	A		; CY=0
+	RET
+	;
+U08EF:	POP	AF
+	SCF			; CY=1
+	RET
+ELSE
+	LD	E,LINE		; UP-Nummer fuer Linie zeichnen/loeschen
+	JR	GRAF1		; weiter wie im UP Punkt setzen/loeschen
+ENDIF
+;
+; GOSUB 650	Ausgabe einer Zeichenkette im Grafikmodus
+;		Uebergabe der Position in den Variablen HO und VE
+;		Uebergabe des Strings in der Variablen SR$
+;
+GO650:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	CALL	U1607		; Werte der Variablen HO, VE und CN holen
+	CALL	U1691		; Zeichenkette SR$ holen
+	DEC	B		; Laenge der Zeichenkette
+	RET	Z		; Laenge = 0
+	LD	A,(YPOS2+1)	; High(YPOS2)
+	OR	A
+	RET	NZ		; ausserhalb
+	LD	A,B		; B = Laenge der Zeichenkette
+	CALL	IRMON		; Routine veraendert BC-Register!
+	LD	B,A
+	LD	HL,(XPOS2)	; X-Position im Grafikmodus
+	LD	A,7
+	AND	L
+	INC	A
+	LD	C,A		; C=Pixelverschiebung (1-8)
+	SRL	H
+	RR	L		; /8
+	SRL	L
+	SRL	L		; L=Horizontalposition (0-27H)
+	LD	A,(YPOS2)	; Y-Position im Grafikmodus
+	ADD	8		; Zeichenhoehe addieren
+	LD	H,A		; H=Vertikalposition (0-0FFH)
+IF KC3
+; beim KC85/3 muss PADR fuer jede Position separat aufgerufen werden
+ELSE
+	CALL	PV1
+	DB	PADR		; HL=IRM-Adresse
+ENDIF
+U07C9:	PUSH	BC		; B=Laenge Zeichenkette, C=Pixelverschiebung
+	PUSH	DE		; Zeiger auf Zeichenkette
+	PUSH	HL		; IRM-Adresse
+	DI
+	IN	A,(PIOAD)
+	LD	B,A
+	RES	2,A		; IRM aus
+	OUT	(PIOAD),A
+	LD	A,(DE)		; Zeichencode holen
+	LD	E,A		; Zeichencode
+	LD	A,B
+	OUT	(PIOAD),A	; IRM wieder ein
+	LD	A,E		; Zeichencode
+	EI
+	CP	20H		; Steuerzeichen?
+	JR	C,U0816		; ja, uebergehen
+	LD	B,C		; Pixelverschiebung
+	LD	C,8		; 8 Byte verarbeiten
+	CALL	U0A1B		; Zeichenbildtabelle nach HL holen
+U07E5:	LD	E,(HL)		; Pixelmuster(1) aus Zeichentabelle lesen
+	XOR	A		; Pixelmuster(2) zunaechst 0
+	LD	D,B		; Anzahl fuer Pixelverschiebung
+	JR	U07ED
+	;
+U07EA:	SRL	E		; Pixelmuster(1) passend verschieben
+	RRA			; Pixelmuster(2) erzeugen
+U07ED:	DJNZ	U07EA
+	LD	B,D		; Anzahl fuer Pixelverschiebung
+	EX	(SP),HL		; HL = IRM-Adresse, Zeichenbildtabelle auf Stack
+	LD	D,A		; D=Pixelmuster(2)
+	LD	A,(CN)		; 0=zeichnen oder 1=loeschen
+	OR	A		; zeichnen oder loeschen?
+	JR	Z,U0802		; -> zeichnen
+
+IF KC3
+
+;Text loeschen
+	LD	A,E		; E=Pixelmuster(1)
+	OR	A
+	PUSH	DE		; D=Pixelmuster(2)
+	JR	Z,L01		; leer
+	PUSH	HL		; Position
+	CALL	U20E0		; IRM-Adresse berechnen und Farbe schreiben
+	CPL			; Pixelmuster invertieren
+	AND	(HL)		; loeschen
+	LD	(HL),A		; Pixelebene schreiben
+	POP	HL		; Position
+L01:	POP	AF		; A=Pixelmuster(2)
+	OR	A
+	JR	Z,U0810		; leer
+	PUSH	HL
+	INC	L		; naechste BS-Spalte
+	CALL	U20E0		; IRM-Adresse berechnen und Farbe schreiben
+	JR	C,U080F		; ausserhalb
+	CPL			; Pixelmuster invertieren
+	AND	(HL)		; loeschen
+	JR	U0808		; Pixelebene zurueck schreiben
+
+;Text zeichnen
+U0802:	LD	A,E		; Pixelmuster(1)
+	OR	A
+	PUSH	DE		; D=Pixelmuster(2)
+	JR	Z,T01		; leer
+	PUSH	HL		; Position
+	CALL	U20E0		; IRM-Adresse berechnen und Farbe schreiben
+	OR	(HL)		; einbauen in vorhandenen Inhalt
+	LD	(HL),A		; Pixelebene schreiben
+	POP	HL		; Position
+T01:	POP	AF		; A=Pixelmuster(2)
+	OR	A
+	JR	Z,U0810		; leer
+	PUSH	HL		; Position
+	INC	L		; Position rechts daneben
+	CALL	U20E0		; IRM-Adresse berechnen und Farbe schreiben
+	JR	C,U080F		; ausserhalb
+	OR	(HL)		; einbauen in vorhandenen Inhalt
+U0808:	LD	(HL),A		; Pixelebene schreiben
+U080F:	POP	HL		; Position
+U0810:	INC	H		; naechste Pixelzeile
+	EX	(SP),HL		; HL=Zeichenbildtabelle
+	INC	HL		; naechstes Byte
+	DEC	C
+	JR	NZ,U07E5	; bis alle 8 Byte verarbeitet sind
+U0816:	POP	HL		; Grafikposition
+	POP	DE		; Zeiger auf Zeichenkette
+	POP	BC		; B=Laenge Zeichenkette, C=Pixelverschiebung
+	INC	DE		; naechstes Zeichen aus Zeichenkette
+	LD	A,H
+	SUB	8
+	LD	H,A
+	INC	L
+	LD	A,L
+	CP	28H		; raus aus IRM?
+	JR	NC,U0826	; ja
+	DJNZ	U07C9		; bis Zeichenkette abgearbeitet ist
+U0826:	JP	IOFRET		; IRM OFF, RET
+
+ELSE
+
+;Text loeschen
+	LD	A,E		; E=Pixelmuster(1)
+	OR	A
+	JR	Z,L01		; leer
+	CPL			; Pixelmuster invertieren
+	AND	(HL)		; loeschen
+	LD	(HL),A		; in Pixelebene eintragen
+	CALL	U1F1A		; Farbebene schreiben
+L01:	INC	H		; naechste BS-Spalte
+	LD	A,D		; Pixelmuster(2)
+	OR	A
+	JR	Z,U080F		; leer
+	CPL			; Pixelmuster invertieren
+	AND	(HL)		; loeschen
+	JR	U0808		; Pixelebene zurueck schreiben
+
+;Text zeichnen
+U0802:	LD	A,E		; Pixelmuster(1)
+	OR	A
+	JR	Z,T01		; leer
+	OR	(HL)		; einbauen in vorhandenen Inhalt
+	LD	(HL),A		; in Pixelebene eintragen
+	CALL	U1F1A		; Farbebene schreiben
+T01:	INC	H		; Position rechts daneben
+	LD	A,D		; Pixelmuster(2)
+	OR	A
+	JR	Z,U080F		; leer
+	OR	(HL)		; einbauen in vorhandenen Inhalt
+U0808:	LD	E,A
+	LD	A,H
+	CP	0A8H		; raus aus IRM?
+	JR	NC,U080F	; ja
+	LD	(HL),E		; in Pixelebene schreiben
+	CALL	U1F1A		; Farbebene schreiben
+U080F:	DEC	H		; zurueck auf erste Spalte
+	INC	L		; naechste Pixelzeile
+	EX	(SP),HL		; HL=Zeichenbildtabelle
+	INC	HL		; naechstes Byte
+	DEC	C
+	JR	NZ,U07E5	; bis alle 8 Byte verarbeitet sind
+U0816:	POP	HL		; IRM-Adresse
+	POP	DE		; Zeiger auf Zeichenkette
+	POP	BC		; B=Laenge Zeichenkette, C=Pixelverschiebung
+	INC	DE		; naechstes Zeichen aus Zeichenkette
+	LD	A,L
+	SUB	8		; 8 Pixelzeilen nach oben
+	LD	L,A
+	INC	H		; eine Spalte nach rechts
+	LD	A,H
+	CP	0A8H		; raus aus IRM?
+	JR	NC,U0826	; ja
+	DJNZ	U07C9		; bis Zeichenkette abgearbeitet ist
+U0826:	JP	IOFRET		; IRM OFF, RET
+
+ENDIF	; KC3
+
+if DEV
+;
+; DEVICE einstellen
+; PE:	C	Kanal-Nr. (2=TAPE, 4=DISK, 6=USB)
+; PA:	CY=1	Treiber nicht vorhanden
+;
+DEVTAB:	DB	'TAPE'
+	DB	'DISK'
+	DB	'USB',0
+	;
+DEVICE:	LD	A,(0EDFFH)	; CAOS-Version beim KC85/4
+	CP	47H		; CAOS 4.7 oder hoeher?
+	JR	NC,DR1		; ja, DEVICE einstellen
+	LD	A,2
+	CP	C		; DEVICE TAPE?
+	RET			; CY=1, wenn anderes DEVICE
+	;
+DR1:	LD	A,C		; Kanal-Nr.
+	CALL	IRMON		; jetzt IRM erst einmal ein wegen PV1
+	LD	HL,IOFRET	; nach DEVICE-Wahl IRM wieder aus
+	PUSH	HL
+	LD	HL,DEVTAB-4	; Tabelle der Treibernamen
+	ADD	A,A		; Kanal-Nr. x2
+	LD	C,A
+	LD	B,0		; BC=4, 8, 12
+	ADD	HL,BC
+	LD	C,B		; mit DEVICE 0 beginnen
+DR2:	PUSH	HL		; gesuchter Treiber
+	PUSH	BC
+	LD	A,C		; Device-Nr.
+	CALL	PV1
+	DB	49H		; DEVICE einstellen
+	POP	BC
+	POP	DE
+	JR	C,DR6		; Treiber nicht vorhanden
+	LD	B,4		; 4 Zeichen pruefen
+	PUSH	DE
+DR3:	LD	A,(DE)		; gesuchte Zeichenkette
+	OR	A		; 0?
+	INC	DE
+	JR	Z,DR4		; ja, 4. Zeichen nicht testen
+	CP	(HL)
+DR4:	INC	HL
+	JR	NZ,DR5		; nicht der gesuchte Treiber
+	DJNZ	DR3
+	POP	DE		; Treiber gefunden
+	RET
+;
+; nicht der gesuchte Treiber:
+DR5:	POP	HL		; gesuchter Treiber
+	INC	C		; naechste Treiber-Nr. versuchen
+	LD	A,C
+	CP	8		; 8 Treiber ausgesucht?
+	JR	NZ,DR2		; nein
+; Device nicht gefunden:
+DR6:	XOR	A		; DEVICE 0 = TAPE
+	CALL	PV1
+	DB	49H		; auf TAPE zurueck stellen
+	SCF			; und Fehler melden
+	RET
+endif
+;
+; Datei im KC-Format zum Lesen oeffnen
+; NF=2
+; PA:	CY=1	Fehler
+;
+U0829:	LD	HL,FNAME	; Dateiname
+	LD	D,8		; Bit3(D)=1 fuer Open
+	SET	5,(IX+7)	; Blocknummern unterdruecken
+	CALL	U0895		; ein Datenbyte einlesen (Open)
+	LD	(U0047),A	; Datenbyte eintragen
+	RET	NC		; OK
+; Lesefehler oder Dateiname falsch bei TAPE
+	PUSH	AF
+U082E:	LD	DE,4000H+MBIN	; Bit6(D)=1 fuer Close
+	CALL	PV5		; Bandeingabe stoppen
+U082F:	POP	AF
+	SCF			; Fehler-Flag
+	RET
+;
+; Datei im KC-Format zum Lesen schliessen
+; NF=2
+; PA:	CY=1	Fehler
+;
+U0864:	LD	D,40H		; Bit6=1 fuer Close
+	DB	21H	; LD HL,nn
+
+; Datei im KC-Format lesen
+; NF=2
+; PA:	A	Datenbyte
+;	CY=1	Fehler
+;
+U0869:	LD	D,0		; kein Open, kein Close
+	LD	A,(U0047)	; letztes Datenbyte
+	CP	3		; war das die Ende-Kennung?
+	JR	Z,U088D		; ja, End-Bit setzen
+	PUSH	AF		; Datenbyte
+	LD	C,D		; Steuerbyte
+	CALL	U0895		; naechstes Datenbyte einlesen
+	JR	NC,U086B	; OK
+	BIT	6,C		; Close?
+	JR	NZ,U082E	; nein, jetzt noch Close
+	JR	U082F
+	;
+U086B:	CP	CR		; nach einem CR muss noch ein LF folgen
+	JR	NZ,U087F	; kein CR
+	BIT	6,C		; war das letzte MBIN bereits Close?
+	CALL	Z,U0895		; nein, noch ein Datenbyte einlesen (LF)
+	JR	C,U082E		; Fehler -> Close
+	LD	A,CR		; nur das CR verwenden
+	JR	U0888
+	;
+U087F:	CP	3		; BRK=Dateiende?
+	JR	NZ,U0888	; nein
+	LD	HL,U0043
+	SET	0,(HL)		; Datei-Ende setzen
+U0888:	LD	(U0047),A	; gelesenes Datenbyte
+	POP	AF		; und vorheriges uebergeben
+	OR	A		; CY=0, kein Fehler
+	RET
+	;
+U088D:	LD	HL,U0043
+	SET	0,(HL)		; Datei-Ende setzen
+	LD	A,CR		; CR zurueckgeben
+	RET
+;
+; ein Datenbyte von Kassette lesen
+;
+U0895:	RES	0,(IX+8)	; evtl. anstehenden Tastendruck ruecksetzen
+	XOR	A
+	LD	(U0044),A	; Abbruch zuruecksetzen
+	LD	E,MBIN
+	CALL	PV5
+	PUSH	AF		; Datenbyte und Fehlerflag merken
+	BIT	0,(IX+8)	; Taste gedrueckt?
+	JR	Z,U08F3		; nein
+	LD	A,0FFH
+	LD	(U0044),A	; Abbruch/Fehler setzen
+	RES	0,(IX+8)	; Tastendruck zuruecksetzen
+U08F3:	;CALL	U09C8		; komplette unterste Bildschirmzeile malen
+	POP	AF		; A=Datenbyte, CY=1 bei Fehler
+	RET
+;
+; Datei im KC-Format zum Schreiben oeffnen
+; NF=3
+; PA:	CY=1	Fehler
+;
+U0915:	LD	A,(FLAGS)
+	OR	8		; Init setzen
+	LD	(FLAGS),A
+	OR	A		; CY=0, kein Fehler
+	RET
+;
+; Datei im KC-Format schreiben
+; NF=3
+; PE:	A	Datenbyte
+; PA:	CY=1	Fehler
+;
+U0946:	CP	CR		; CR?
+	JR	NZ,U094F	; nein
+	CALL	U094F		; CR schreiben
+	RET	C		; Fehler
+	LD	A,LF		; und danach ein LF automatisch anhaengen
+U094F:	LD	D,0		; kein Open, kein Close
+U0950:	LD	HL,FLAGS
+	BIT	3,(HL)		; Init?
+	JR	Z,U0976		; nein
+	RES	3,(HL)		; Init ruecksetzen
+	SET	3,D		; Bit3(D)=1 fuer Open
+	LD	HL,FNAME	; Dateiname
+	SET	5,(IX+7)	; Blocknummern unterdruecken
+U0976:	LD	E,MBOUT
+	PUSH	DE		; D=Steueryte auf Stack erhalten
+	CALL	PV5
+	POP	DE
+	RET	C		; Fehler
+	BIT	6,D		; war das Close?
+	JR	NZ,U0977	; ja, Tastensimulation von BASEX zuruecknehmen
+	BIT	0,(IX+8)	; Taste gedrueckt?
+;	LD	A,(IX+13)	; Tastencode
+;	OR	A		; Taste gedrueckt?
+	RET	Z		; nein
+	LD	A,0FFH
+	LD	(U0044),A	; Abbruch/Fehler setzen
+U0977:	RES	0,(IX+8)	; Tastendruck zuruecksetzen
+	RET
+;
+; Datei im KC-Format zum Schreiben schliessen
+; NF=3
+; PA:	CY=1	Fehler
+;
+U099A:	LD	A,3		; Ende-Kennung
+	LD	D,40H		; Bit6=1 fuer Close
+	JR	U0950		; als letztes Zeichen in Datei schreiben
+;
+; IRM-Adresse auf linke Spalte / letzte Zeile setzen
+;
+U09AE:	PUSH	HL
+IF KC3
+	LD	HL,9E40H	; IRM-Adresse fuer Zeichen links/unten (KC85/3)
+ELSE
+	LD	HL,80F8H	; IRM-Adresse fuer Zeichen links/unten (KC85/4)
+ENDIF
+	LD	(U004C),HL	; IRM-Adresse eintragen
+	POP	HL
+	RET
+;
+; unterste Bildschirmzeile malen mit dem Inhalt des Puffers
+;
+U09C8:	CALL	U09AE		; IRM-Adresse auf links/unten einstellen
+	LD	HL,U0000
+	LD	BC,2820H	; B=40 Spalten, C=Leerzeichen
+U09D1:	LD	A,(HL)
+	CP	C		; Steuerzeichen?
+	JR	NC,U09D6	; nein
+	LD	A,C		; stattdessen Leerzeichen
+U09D6:	CALL	U09DD		; Zeichen malen
+	INC	HL
+	DJNZ	U09D1
+	RET
+;
+; Zeichen in unterster Bildschirmzeile malen (ohne VRAM)
+;
+U09DD:	PUSH	AF
+	CP	20H		; Steuerzeichen?
+	CALL	C,U09AE		; dann wieder von vorn beginnen
+	JR	C,U0A19		; sonst nichts
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	LD	E,A		; Zeichen
+	IN	A,(PIOAD)
+	BIT	2,A		; IRM ein?
+	CALL	Z,IRMON		; bei Bedarf einschalten
+	PUSH	AF		; IRM-Zustand merken
+	LD	A,E
+	LD	E,' '
+	CP	E		; Steuerzeichen?
+	JR	NC,U09F8	; nein
+	LD	A,E		; stattdessen Leerzeichen anzeigen
+U09F8:	CALL	U0A1B		; Zeichenbildtabelle nach HL holen
+	LD	DE,(U004C)	; IRM-Adresse
+	PUSH	DE
+IF KC3
+;KC85/3-spezifisch:
+	CALL	U0B86		; Zeichen malen (Pixel-IRM)
+	POP	HL
+	INC	L
+	LD	A,60H
+	CP	L
+	JR	NZ,U0B78
+	LD	A,H
+	CP	9EH		; rechter Teil erreicht?
+	JR	NZ,U0B75	; nein
+	LD	HL,0A658H	; Pixel-IRM Zeile 31, Spalte 32
+	JR	U0B78
+	;
+U0B75:	LD	HL,09E40H	; Pixel-IRM Zeile 31, Spalte 0
+U0B78:	LD	(U004C),HL	; IRM-Adresse fuer naechstes Zeichen
+ELSE
+	LD	BC,8		; 8 Bit
+	LDIR			; direkt in Pixel-IRM kopieren
+	POP	HL
+	INC	H		; eine Spalte nach rechts
+	LD	(U004C),HL	; IRM-Adresse fuer naechstes Zeichen
+	LD	A,H
+	CP	0A8H		; Ende erreicht?
+	CALL	Z,U09AE		; IRM-Adresse auf links/unten zurueckstellen
+ENDIF
+	POP	AF
+	BIT	2,A		; war IRM aus?
+	CALL	Z,IRMOFF	; dann jetzt wieder ausschalten
+	POP	BC
+	POP	DE
+	POP	HL
+U0A19:	POP	AF
+	RET
+IF KC3
+;
+; Zeichen malen in Pixel-IRM KC85/3:
+;
+U0B86:	CALL	U0B8B		; 4 Byte
+	SET	5,E		; und nochmals 4 Byte
+U0B8B:	RES	0,D
+	CALL	U0B92		; 2 Byte
+	SET	0,D		; und nochmals 2 Byte
+U0B92:	RES	7,E
+	LD	A,(HL)		; aus Zeichentabelle
+	INC	HL
+	LD	(DE),A		; in Pixel-IRM
+	SET	7,E
+	LD	A,(HL)		; aus Zeichentabelle
+	INC	HL
+	LD	(DE),A		; in Pixel-IRM
+	RET
+ENDIF
+;
+; Zeichenbildtabelle holen
+; PE:	A = Zeichencode
+; PA:	HL = Adresse des Zeichencodes
+;
+U0A1B:	AND	7FH		; ohne 7 Bit, also nur CCTL0/CCTL1
+	CP	20H
+	JR	C,U0A2E		; 00H bis 1FH aus CCTL1
+	CP	60H
+	JR	NC,U0A2C	; 60H bis 7FH aus CCTL1
+	LD	HL,(CCTL0)
+	SUB	20H		; 20H bis 5FH aus CCTL0
+	JR	U0A31
+	;
+U0A2C:	SUB	40H
+U0A2E:	LD	HL,(CCTL1)
+U0A31:	PUSH	DE
+	EX	DE,HL
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL		; Zeichen * 8
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,DE		; Zeichentabelle addieren
+	POP	DE
+	RET
+;
+; Tabelle der Zeitkonstanten fuer Tonwerte
+;
+U0A3C:	DB	0FFH	; 0	45
+	DB	0F0H	; 1	46
+	DB	0E3H	; 2	47
+	DB	0D6H	; 3	48
+	DB	0CAH	; 4	49
+	DB	0BFH	; 5	50
+	DB	0B4H	; 6	51
+	DB	0AAH	; 7	52
+	DB	0A1H	; 8	53
+	DB	98H	; 9	54
+	DB	8FH	; 10	55
+	DB	87H	; 11	56
+	DB	7FH	; 12	57
+	DB	78H	; 13	58
+	DB	71H	; 14	59
+	DB	6BH	; 15	60
+	DB	65H	; 16	61
+	DB	5FH	; 17	62
+	DB	5AH	; 18	63
+	DB	55H	; 19	64
+	DB	50H	; 20	65
+	DB	4CH	; 21	66
+	DB	47H	; 22	67
+	DB	43H	; 23	68
+	DB	40H	; 24	69
+	DB	3CH	; 25	70
+	DB	39H	; 26	71
+	DB	36H	; 27	72
+	DB	33H	; 28	73
+	DB	30H	; 29	74
+	DB	2DH	; 30	75
+	DB	2BH	; 31	76
+	DB	28H	; 32	77
+	DB	26H	; 33	78
+	DB	24H	; 34	79
+	DB	22H	; 35	80
+	DB	20H	; 36	81
+	DB	1EH	; 37	82
+	DB	1CH	; 38	83
+	DB	1BH	; 39	84
+	DB	19H	; 40	85
+	DB	18H	; 41	86
+	DB	17H	; 42	87
+	DB	15H	; 43	88
+	DB	14H	; 44	89
+	DB	13H	;	90
+	DB	12H	;	91
+	DB	11H	;	92
+	DB	10H	;	93
+	DB	0FH	;	94
+	DB	0EH	;	95
+	DB	0DH	;	96
+	DB	0DH	;	97
+	DB	0CH	;	98
+	DB	0BH	;	99
+	DB	0BH	;	100
+	DB	0AH	;	101
+	DB	09H	;	102
+	DB	09H	;	103
+	DB	08H	;	104
+	DB	08H	;	105
+	DB	08H	;	106
+	DB	07H	;	107
+U0A7B:	DB	07H	;	108	(Zeiger auf USER-Eingabe Kanal 2)
+	DB	06H	;	109
+	DB	06H	;	110
+	DB	06H	;	111
+	DB	05H	;	112
+	DB	05H	;	113
+	DB	05H	;	114
+	DB	04H	;	115
+	DB	04H	;	116
+	DB	04H	;	117
+	DB	04H	;	118
+	DB	04H	;	119
+	DB	03H	;	120
+	DB	03H	;	121
+	DB	03H	;	121
+	DB	03H	;	123
+	DB	03H	;	124
+	DB	03H	;	125
+	DB	02H	;	126
+	DB	02H	;	127
+
+IF KC3
+;
+; Bit-Tabelle fuer Linien-UP
+;
+BITTAB:	DB	80H,40H,20H,10H,8,4,2,1
+ELSE
+;
+; Zeichenkette zum Hervorheben (invers) beim KC85/4
+;
+U0A8F:	DB	' '
+U0A90:	DB	' '
+	DB	ESC,'7'		; Invers ein/aus
+	DB	'  '
+ENDIF
+;
+; F-Tastenbelegung
+;
+U0A95:	NOP
+	DB	'*L',CR		; F1
+	NOP
+	DB	'*A',CR		; F2
+	NOP
+	DB	'*W',CR		; F3
+	NOP
+	DB	'*T',CR		; F4
+	NOP
+	DB	'*C',CR		; F5
+	NOP
+	DB	'*K',CR		; F6
+	NOP
+	DB	1DH		; Shift+F1 = RUN
+	NOP
+	DB	1EH		; Shift+F2 = CONT
+	NOP
+	DB	1CH		; Shift+F3 = LIST
+	NOP
+	DB	2,'%REBASIC',0DH,'CALL*'	; Shift+F4
+	ASCTXT	U040D
+	DB	CR
+	NOP
+	DB	'CLOAD"'	; Shift+F5
+	NOP
+	DB	2,'CSAVE"'	; Shift+F6
+	NOP
+;
+; Daten fuer Titelbild
+;
+U0AD7:	DB	01H,1FH,01H,1FH		; 43 Linien fuer Schallplatte
+	DB	02H,05H,06H,0EH
+	DB	01H,1EH,08H,1EH
+	DB	03H,05H,07H,0EH
+	DB	01H,1DH,0BH,1DH
+	DB	01H,0BH,01H,0BH
+	DB	01H,1CH,0EH,1CH
+	DB	01H,0AH,05H,0AH		; 8. Linie
+	DB	01H,1BH,10H,1BH
+	DB	01H,09H,07H,09H
+	DB	01H,1AH,12H,1AH
+	DB	02H,08H,08H,08H
+	DB	01H,19H,13H,19H
+	DB	06H,07H,09H,07H
+	DB	01H,18H,14H,18H		; 15. Linie
+	DB	07H,06H,09H,06H
+	DB	01H,17H,15H,17H
+	DB	08H,05H,0AH,05H
+	DB	01H,16H,16H,16H
+	DB	08H,04H,0AH,04H
+	DB	01H,15H,17H,15H
+	DB	08H,03H,0AH,03H		; 22. Linie
+	DB	01H,14H,18H,14H
+	DB	08H,02H,0AH,02H
+	DB	01H,13H,19H,13H
+	DB	05H,01H,1FH,01H
+	DB	01H,12H,1AH,12H
+	DB	0EH,02H,1EH,02H
+	DB	01H,11H,1AH,11H		; 29. Linie
+	DB	0EH,03H,1EH,03H
+	DB	01H,10H,1BH,10H
+	DB	0EH,04H,1EH,04H
+	DB	01H,0FH,1BH,0FH
+	DB	0EH,05H,1EH,05H		; 34. Linie
+	DB	02H,0EH,1CH,0EH
+	DB	0EH,06H,1EH,06H
+	DB	07H,0DH,1CH,0DH
+	DB	0DH,07H,1EH,07H
+	DB	09H,0CH,1CH,0CH
+	DB	0DH,08H,1EH,08H
+	DB	0BH,0BH,1DH,0BH
+	DB	0CH,09H,1DH,09H
+	DB	0CH,0AH,1DH,0AH		; 43. Linie
+
+	DB	00H,08H,05H,00H		; Linien fuer TAPE-Signal
+	DB	00H,0F8H,05H,00H
+	DB	00H,08H,05H,00H
+	DB	00H,0F8H,05H,00H
+	DB	00H,08H,0AH,00H
+	DB	00H,0F8H,0AH,00H
+
+	DW	020AH		; Posision
+	DB	'BASICODE-3C Version 1.5d',0
+
+	DW	0412H		; Position
+IF KC3
+	DB	'KC85/3',0
+	DW	060AH		; Position
+	DB	'Zierott, Arendt, Leubner'
+ELSE
+IF DEV
+	DB	'KC85/5',0
+ELSE
+	DB	'KC85/4',0
+ENDIF
+	DW	060AH		; Position
+	DB	'Zierott, Wenzel, Leubner'
+ENDIF
+	DB	CR,LF,LF,LF,LF,LF
+	DB	0
+;
+; Kaltstart (Initialisierung mit CALL*410)
+;
+KALT:	LD	L,(IX+14)	; KTAB
+	LD	H,(IX+15)	; aktueller Wert
+	LD	(U004E),HL	; hier merken
+	XOR	A		; A=0
+	LD	(FLAGS),A
+	LD	(U0045),A	; keine Kanaele geoeffnet
+; 13.11.2023, Frank Ludwig:
+; Beim Kaltstart wird das Basicodeprogramm nicht sauber geloescht.
+; Die Zeiger werden zwar auf das Ende des Bascoders gesetzt.
+; Die zwei Null-Bytes, die das Programmende kennzeichnen werden dort
+; aber nicht eingetragen. Der Zeiger auf den Anfang der naechsten Zeile bleibt
+; also bestehen.
+;
+	LD	HL,Z1000	; Anfang BASICODE-Programm
+	LD	(HL),A		; Eintragen der beiden Null-Bytes
+	INC	HL
+	LD	(HL),A
+	INC	HL		; Programmende, Basicode-Programm loeschen
+
+	INC	A		; A=1
+	LD	(DUMMY),A	; Anzahl Dummyzeichen
+;	LD	HL,U21F3	; Programmende, Basicode-Programm loeschen
+	LD	(SVARPT),HL	; Anfang Variablenspeicher
+	LD	(DVARPT),HL	; Liste der Feldvariablen
+	LD	(FSLPTR),HL	; Erste freie Adresse hinter den Listen
+;
+; Warmstart (CALL*40D)
+;
+WARM:	CALL	BCINIT		; Initialisierung, Druckertreiber kopieren
+	LD	HL,BCMENU	; BASICODE-Menue
+	PUSH	HL		; als Ruecksprungadresse auf den Stack
+	LD	A,0C3H		; JUMP auf 38H eintragen
+	LD	(U0038),A	; RST38 abfangen
+	LD	HL,U0413	; "Systemabsturz"-Meldung
+	LD	(U0039),HL	; als Sprungadresse
+WARM1:	LD	HL,Z1000	; Anfang BASIC-Programm Zeile 1000
+	LD	(PSTBEG),HL	; als sichtbaren Anfang einstellen
+	LD	HL,U04C3	; eigene Routine fuer
+	LD	(IO_ERR),HL	; IO-ERROR regenerieren
+	CALL	U0643		; Original-KTAB einstellen (BRK/STOP aktiviert)
+	LD	A,(U0045)	; BASICODE-Kanaele geoeffnet?
+	OR	A
+	RET	Z		; nein, dann Logo und Speicherbelegung anzeigen
+	CALL	IRMOFF		; ansonsten jetzt IRM OFF (???)
+	LD	HL,U1E81+16	; Ende von Sprungverteiler Datei Schliessen
+WARM2:	ADD	A		; Entspechend der Bitnummer ...
+	DEC	HL		; ... Sprungadresse suchen
+	DEC	HL		;  (benutzt werden die Bits 0..3)
+	JR	C,WARM3		; Datei schliessen
+	JR	NZ,WARM2	; noch weitere Dateien offen
+	LD	(U0045),A	; wenn fertig, alle Kanaele geschlossen
+	LD	HL,U1CAB	; Text 'Bestaende geschlossen!'
+	CALL	U1AE5		; anzeigen
+	JP	SECST		; RESTART BASIC-Interpreter
+	;
+WARM3:	PUSH	AF
+	PUSH	HL
+	LD	A,(HL)		; Adresse aus Sprungverteiler lesen
+	INC	HL
+	LD	H,(HL)
+	LD	L,A
+	CALL	CALLHL		; CALL (HL) hier Kanal schliessen
+	POP	HL
+	POP	AF
+	JR	WARM2
+;
+; abgefangene Eingaberoutine bei USER-INPUT 2 (07H)
+; konvertiert bei Bedarf das ASCII-File zu BASIC, indem das ASCII-File
+; als Eingabedaten verwendet wird.
+;
+U0C39:	LD	A,(FLAGS)
+	BIT	0,A		; laeuft gerade Konvertierung ASCII -> BASIC?
+	JP	NZ,U0CE2	; ja
+	LD	HL,(CULINO)	; aktuelle Zeilennummer
+	INC	HL
+	LD	A,(AUTOFG)	; automatische Zeilennummerierung?
+	OR	H		; oder Programm-Mode?
+	OR	L
+	JP	NZ,U062C	; dann direkt zu KBD
+	CALL	WARM1		; Programmanfang auf Zeile 1000 stellen und
+				; BASICODE-Dateien schliessen, falls noetig
+	CALL	U062C		; Eingabe ein Zeichen
+	CP	20H
+	RET	NC		; kein Steuerzeichen
+	CP	1DH
+	JR	Z,U1AAE		; RUN-Taste -> BASICODE-Routinen aktivieren
+	CP	1EH
+	JR	Z,U1AAE		; CONT-Taste -> BASICODE-Routinen aktivieren
+	CP	CR
+	RET	NZ		; nicht Enter
+
+; bei Enter noch testen, was im Eingabepuffer steht:
+	LD	HL,INPBUF	; Eingabepuffer
+U0C66:	INC	HL
+	LD	A,(HL)
+	CP	20H
+	JR	Z,U0C66		; Leerzeichen uebergehen
+	PUSH	BC
+	PUSH	DE
+	LD	DE,U1EB7	; diese Befehle abfangen (CONT, GO, RUN, CSAVE)
+	LD	B,4		; 4 Befehle
+U0C73:	PUSH	HL
+U0C74:	LD	A,(HL)		; Zeichen aus Eingabepuffer
+	AND	5FH		; UPCASE
+	LD	C,A		; in C merken
+	LD	A,(DE)		; Zeichen aus Vergleichsspeicher
+	INC	DE
+	OR	A		; Ende-0?
+	JR	Z,U0C93		; Befehl erkannt
+	INC	HL
+	CP	C
+	JR	Z,U0C74		; stimmt, weitersuchen
+	POP	HL
+U0C82:	LD	A,(DE)
+	INC	DE
+	OR	A		; Ende-0 suchen
+	JR	NZ,U0C82
+	DJNZ	U0C73		; bis alle 4 Befehle getestet sind
+	POP	DE
+	POP	BC
+	LD	A,(HL)		; Eingabepuffer
+	CP	'*'		; Sonderbefehl mit * ?
+	JR	Z,U0CA5
+	LD	A,CR		; ansonsten einfach das CR zurueckgeben
+	RET
+;
+; CONT, GO, RUN oder CSAVE erkannt:
+;
+U0C93:	EX	(SP),HL
+	POP	DE
+	LD	A,B
+	DEC	A
+	JR	Z,U0C9E		; CSAVE
+	POP	DE
+	POP	BC
+	LD	A,CR		; CR, RUN-Mode
+U1AAE:	LD	HL,U04C4	; Spezial-Routine fuer
+	LD	(IO_ERR),HL	; IO-ERROR eintragen
+	LD	HL,ZEILE2	; BASICODE-Routinen freigeben fuer RUN-Modus
+	LD	(PSTBEG),HL	; als Programmstart-Adresse eintragen
+	RET
+	;
+U0C9E:	POP	BC
+	POP	BC
+	LD	(HL),A
+	LD	C,7		; 7. Sonderbefehl
+	JR	U0CBA		; aus Sprungtabelle lesen
+;
+; Sonderbehandlung Befehle mit *
+;
+U0CA5:	LD	(HL),0		; Stern im Eingabepuffer loeschen
+;	CALL	IRMON
+	LD	A,DEFCOL	; Standardfarbe einstellen
+	LD	(COLOR),A
+	CALL	IRMOFF
+	CALL	TCHAR		; naechstes gueltiges Zeichen holen
+
+	AND	5FH		; upcase
+	LD	HL,U1EA1	; 6 Kennbuchstaben
+	LD	BC,6
+	CPIR
+	JR	Z,U0CBA		; gefunden
+	LD	D,B		; D=0
+	LD	E,C		; E=0
+	LD	C,6		; 6. Befehl = Menue
+U0CBA:	LD	A,C
+	CALL	IRMON
+	LD	IY,(STDPTR)	; RAM-Mindestgroesse (KC85/3=7EFF KC85/4=BEFF)
+	DEC	IY		; davor gehen und als neuen Stack definieren
+IF KC3
+	LD	(0B7CBH),IY	; Zwischenspeicher fuer SP bei CAOS 3.4 und OS/Pi
+ENDIF
+	CALL	IRMOFF
+	LD	BC,SECST	; RESTART BASIC-Interpreter
+	PUSH	BC		; auf Stack legen als RET-Adresse
+	LD	HL,U1EA7	; Tabelle der Sprungadressen der Routinen
+	LD	C,A
+	LD	B,0		; BC=Nr. der Routine
+	ADD	HL,BC
+	ADD	HL,BC		; Position in Tabelle berechnen
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC=Sprungadresse
+	PUSH	BC		; auf Stack legen zum Start
+	EX	DE,HL
+	CP	7
+	CALL	NZ,CLS		; Bildschirm loeschen, ausser bei CSAVE
+	JP	CRWDY2		; Anzeige CR, LF, Dummyzeichen
+;
+; USER-Input 2 waehrend Uebersetzung ASCII -> BASIC
+;
+U0CE2:	PUSH	DE
+	CALL	U0613		; Taste gedrueckt?
+	CP	3		; BRK?
+	JR	Z,U0D01		; ja
+	LD	HL,(CPOINT)	; Pufferzeiger
+	DI
+	IN	A,(PIOAD)
+	RES	2,A		; IRM aus
+	OUT	(PIOAD),A
+	LD	A,(HL)
+	LD	DE,(U0033)	; Ende ASCII-File
+	DEC	DE
+	PUSH	HL
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	JR	C,U0D2A
+U0D01:	LD	C,A
+	LD	A,(FLAGS)
+	AND	0FCH		; Bit 0 und 1 ruecksetzen
+	LD	(FLAGS),A
+	IN	A,(PIOAD)
+	SET	2,A		; IRM ein
+	OUT	(PIOAD),A
+	EI
+	LD	HL,(U0041)	; gespeicherte Adresse fuer UOUT1
+	LD	(UOUT1+1),HL	; wieder eintragen
+	LD	HL,(XPOS2)	; gespeicherte Adresse fuer OUTAB
+	LD	(OUTAB),HL	; wieder eintragen
+	LD	A,C
+	CP	1DH		; RUN?
+	POP	DE
+	JP	Z,U1AAE		; -> BASICODE-Routinen aktivieren
+	SUB	3
+	RET	Z		; BRK
+	LD	A,CR
+	RET
+	;
+U0D2A:	CP	CR
+	JR	NZ,U0D33
+	CALL	U09AE		; IRM-Adresse auf links/unten einstellen
+	JR	U0D3F
+	;
+U0D33:	CP	20H		; Steuerzeichen?
+	JR	C,U0D3B
+	CP	7FH
+	JR	C,U0D3F
+U0D3B:	LD	A,'#'		; Ersatz fuer nicht darstellbare Zeichen
+	JR	U0D44
+	;
+U0D3F:	LD	B,A
+	CALL	U0D53		; Spezialbehandlung fuer DATA, REM und LOG
+	LD	A,B
+U0D44:	INC	HL
+	LD	(CPOINT),HL	; Pufferzeiger
+	POP	DE
+	LD	B,A
+	IN	A,(PIOAD)
+	SET	2,A		; IRM ein
+	OUT	(PIOAD),A
+	EI
+	LD	A,B
+	RET
+;
+; Spezialbehandlung fuer DATA, REM und LOG
+;
+U0D53:	LD	A,(FLAGS)
+	AND	40H		; Bit 6?
+	JR	NZ,U0DAF
+	LD	A,B
+	CP	'"'
+	JR	Z,U0D8F		; Zeichenkette
+	PUSH	HL
+	INC	HL
+	CP	'L'
+	JR	Z,U0D9D
+	CP	'R'
+	JR	Z,U0D82
+	CP	'D'
+	JR	NZ,U0D9B
+; D
+	LD	A,(HL)
+	CP	'A'
+	JR	NZ,U0D9B
+; DA
+	INC	HL
+	LD	A,(HL)
+	CP	'T'
+	JR	NZ,U0D9B
+; DAT
+	INC	HL
+	LD	A,(HL)
+	CP	'A'
+	JR	NZ,U0D9B
+; DATA
+	LD	A,':'
+	JR	U0D8E
+	;
+; R
+U0D82:	LD	A,(HL)
+	CP	'E'
+	JR	NZ,U0D9B
+; RE
+	INC	HL
+	LD	A,(HL)
+	CP	'M'
+	JR	NZ,U0D9B
+; REM
+	XOR	A
+U0D8E:	POP	HL
+U0D8F:	LD	(U003C),A
+	LD	A,(FLAGS)
+	OR	40H		; Bit 6 setzen
+	LD	(FLAGS),A
+	RET
+	;
+; alles andere
+U0D9B:	POP	HL
+	RET
+	;
+; L
+U0D9D:	LD	A,(HL)
+	CP	'O'
+	JR	NZ,U0D9B
+; LO
+	INC	HL
+	LD	A,(HL)
+	CP	'G'
+	JR	NZ,U0D9B
+; LOG
+	POP	HL
+	INC	HL
+	INC	HL
+	LD	(HL),'N'	; LOG -> LN
+	DEC	HL
+	RET
+	;
+U0DAF:	LD	A,(U003C)
+	CP	B
+	JR	Z,U0DB9
+	LD	A,CR
+	CP	B
+	RET	NZ
+U0DB9:	LD	A,(FLAGS)
+	AND	0BFH		; Bit 6 ruecksetzen
+	LD	(FLAGS),A
+	RET
+;
+; Speicherbelegung anzeigen
+;
+BCMENU:	LD	HL,7		; Stacktiefe in Bytes-1
+;
+; BASICODE-Menu
+;
+STAR:	PUSH	HL
+	CALL	TITEL		; Titelbild zeichnen
+	LD	HL,(SVARPT)	; Ende BASIC-Programm
+	LD	DE,U21F3	; Anfang BASIC-Programm
+	OR	A
+	SBC	HL,DE		; berechnen
+	LD	DE,U1D18	; Text "Programm:"
+	CALL	U0E0A		; Text+Wert anzeigen
+	CALL	U1AB5		; ASCII-File und BASIC-Programm im Speicher?
+	AND	2
+	LD	HL,0
+	JR	Z,U0DEB		; kein ASCII-File im Speicher
+	LD	HL,(U0033)	; Ende ASCII-File
+	LD	DE,(U0031)	; Beginn ASCII-File
+	SBC	HL,DE
+U0DEB:	LD	DE,U1D24	; Text "ASC-File:"
+	CALL	U0E0A		; Text+Wert anzeigen
+	POP	DE
+	LD	HL,-13		; freien Speicher
+	ADD	HL,DE
+	ADD	HL,SP
+	LD	DE,(FSLPTR)	; erste freie Adresse hinter den Variablen
+	OR	A
+	SBC	HL,DE
+	LD	DE,U1D2E	; Text "Frei:"
+	CALL	U0E0A		; anzeigen
+	LD	HL,U1D38	; Text "BASICODE-Menue..."
+	JP	TEXTOE		; anzeigen
+;
+; Ausgabe Prgrammgroesse in Bytes
+;
+U0E0A:	EX	DE,HL
+	PUSH	DE
+	CALL	TEXTOE		; Textausgabe
+	POP	DE
+	CALL	NUMBO1		; Zahl ausgeben
+	LD	HL,U1D0F	; Text "Bytes", CR, LF
+	JP	TEXTOE		; Textausgabe
+;
+; *L - Laden, Uebersetzen und Starten
+;
+STAR_L:	LD	HL,(Z1000)	; Anfang BASIC-Programm
+	LD	A,H
+	OR	L
+	JR	Z,U0E38		; kein BASIC-Programm im Speicher
+	LD	HL,U1C76	; Text 'Programm wurde geloescht!'
+	CALL	U1AE5		; anzeigen
+	LD	HL,0		; Programm loeschen
+	LD	(Z1000),HL	; Anfang BASIC-Programm
+	LD	HL,U21F3
+	LD	(SVARPT),HL	; Programmende+1
+	LD	(DVARPT),HL
+	LD	(FSLPTR),HL	; erste freie Adresse hinter den Variablen
+U0E38:	CALL	STAR_A		; Einlesen ASCII-File
+	LD	A,(U0043)
+	OR	A		; fehlerfrei eingelesen?
+	RET	NZ		; nein
+	LD	HL,(U0033)	; Ende ASCII-File
+	LD	(HL),1DH	; RUN anhaengen
+	INC	HL
+	LD	(U0033),HL	; Ende ASCII-File
+	JP	STAR_T		; Uebersetzen ASCII-File nach BASIC
+;
+; CSAVE - Sonderbehandlung
+;
+CSAVE:	XOR	A		; kein Kopierschutz
+	LD	(DATBYT),A
+	CALL	CASS01		; *.SSS Name holen
+	LD	HL,(SVARPT)	; Programmende+1
+	LD	DE,Z1000	; Anfang BASIC-Programm
+	OR	A
+	SBC	HL,DE		; Laenge des BASICODE-Programms
+	LD	B,H
+	LD	C,L
+;	LD	DE,Z1000	; Anfang BASIC-Programm (doppelt gemoppelt ???)
+	JP	CSAVE0		; BASIC-Programm abspeichern
+;
+; *A - Einlesen ASCII-File
+;
+STAR_A:	CALL	U18EC		; BASICODE Bandeingabe vorbereiten
+U0E67:	CALL	BCSYN		; Synchronisation mit Frequenzmessung
+	LD	A,0FFH
+	LD	(U0043),A
+	LD	HL,(SVARPT)	; Programmende+1
+	LD	(U0031),HL	; Beginn ASCII-File
+U0E75:	CALL	BCIN		; ein Byte lesen
+	JR	C,U0E75		; Fehler, wiederholen
+	JP	NZ,BCIOLD	; Taste gedrueckt -> ISR (Eingabe) zurueckstellen
+	CP	2
+	JR	Z,U0E89		; Startbyte erkannt
+	LD	HL,U1BFE	; Text 'kein BASICODE-Programm!'
+	CALL	U1AE5		; anzeigen
+	JR	U0E67
+	;
+U0E89:	CALL	BCIN		; ein Byte lesen
+	JR	C,U0EA6		; Fehler oder letztes Byte
+	JR	NZ,U0EB6	; Taste gedrueckt
+	PUSH	HL
+	SBC	HL,SP		; Stack erreicht?
+	POP	HL
+	JR	C,U0EA2
+	CALL	U0ECA		; 'Speichergrenze erreicht!'
+	LD	HL,-8
+	ADD	HL,SP
+	DEC	HL
+	LD	(HL),CR
+	JR	U0EB6
+	;
+U0EA2:	LD	(HL),A		; Byte eintragen
+	INC	HL		; naechste Adresse
+	JR	U0E89		; und weiter
+	;
+U0EA6:	DEC	HL
+	XOR	A		; A=0, wenn OK
+	EXX
+	INC	H		; Pruefsumme
+	DEC	H		; richtig?
+	EXX
+	JR	Z,U0EB8		; ja
+	PUSH	HL
+	LD	HL,U1BA1	; Text 'Lesefehler erkannt!'
+	CALL	U1AE5		; anzeigen
+	POP	HL
+U0EB6:	LD	A,0FFH
+U0EB8:	LD	(U0043),A	; FF=Lesefehler, 00=OK
+	LD	(U0033),HL	; Ende ASCII-File
+	CALL	BCIOLD		; umgeleitete ISR (Eingabe) zurueckstellen
+	LD	A,(FLAGS)
+	OR	2		; Bit 1 setzen, ASCII-File im Speicher
+	LD	(FLAGS),A
+	RET
+;
+; *W - Retten ASCII-File
+;
+STAR_W:	LD	A,(FLAGS)
+	AND	2		; Bit 1?
+	JP	Z,U1ADC		; kein ASCII-File im Speicher!
+	CALL	U1919		; BASICODE Bandsusgabe vorbereiten
+	CALL	VTON		; 5 Sekunden Vorton
+	LD	H,0		; Startwert fuer Pruefsumme
+	EXX
+	LD	A,2		; Startbyte STX (Start of Text)
+	CALL	BCOUT		; ein Byte schreiben
+	LD	HL,(U0031)	; Beginn ASCII-File
+	LD	DE,(U0033)	; Ende ASCII-File
+U0EED:	LD	A,(HL)		; Zeichen aus Speicher holen
+	INC	HL
+	CALL	BCOUT		; ein Byte schreiben
+	CALL	U0622		; Taste gedrueckt?
+	JP	NZ,BCOOLD	; ja, umgeleitete ISR (Ausgabe) zurueckstellen
+	CALL	CPREG		; ASCII-File fertig?
+	JR	NZ,U0EED	; nein, weiter
+	JP	U18D0		; Ende-Byte, Pruefbyte und ISR rueckstellen
+;
+; *T - Uebersetzen ASCII-File ==> BASIC
+;
+STAR_T:	CALL	U1AB5		; ASCII-File und BASIC-Programm im Speicher?
+	BIT	1,A
+	JP	Z,U1ADC		; kein ASCII-File im Speicher!
+	LD	A,(FLAGS)
+	OR	1		; Bit 0 setzen
+	AND	0BFH		; Bit 6 ruecksetzen
+	LD	(FLAGS),A
+	LD	HL,(U0031)	; Beginn ASCII-File
+	LD	(CPOINT),HL	; Pufferzeiger
+	CALL	U09AE		; IRM-Adresse auf links/unten einstellen
+	CALL	IRMON
+	LD	HL,(UOUT1+1)	; Adresse der aktuellen Druckerausgabe
+	LD	(U0041),HL	; hier merken
+	LD	HL,U09DD	; Zeichen auf untere Zeile malen
+	LD	(UOUT1+1),HL	; jetzt hier eintragen
+	LD	HL,(OUTAB)	; Adresse Ausgabezeiger
+	LD	(XPOS2),HL	; zwischenspeichern
+	LD	HL,U12DF+1	; Zeiger auf 02=UOT1
+	LD	(OUTAB),HL	; Ausgaberoutine umstellen, damit Anzeige auf
+	JP	IOFRET		; der unteren Bildschirmzeile erfolgt
+;
+; *C - Uebersetzen BASIC ==> ASCII
+;
+STAR_C:	CALL	U1AB5		; ASCII-File und BASIC-Programm im Speicher?
+	BIT	0,A		; BASIC-Programm?
+	JR	NZ,U0F52	; vorhanden
+	LD	HL,U1C90	; Text 'kein Programm im Speicher!'
+	JP	U1AE5		; anzeigen
+	;
+U0F52:	LD	HL,Z1000-1	; Anfang BASIC-Programm
+U0F55:	LD	A,(FLAGS)
+	AND	3FH		; Bit 6 und 7 (Fehler) ruecksetzen
+	LD	(FLAGS),A
+	INC	HL
+	LD	A,(HL)		; 2x 00 hintereinander
+	INC	HL		; kennzeichnet Programmende
+	OR	(HL)
+	JP	Z,U1012		; fertig
+	INC	HL
+	CALL	U0613		; Taste gedrueckt?
+	CP	3		; BRK?
+	RET	Z		; Abbruch mit BRK
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = Zeilennummer
+U0F6E:	CALL	TCHAR		; naechstes gueltiges Zeichen holen
+	OR	A
+	JR	Z,U0FEE		; 0 = Zeilenende
+	CP	'"'
+	JR	Z,U0FE5		; Beginn einer Zeichenkette
+	CP	8EH		; REM?
+	JR	Z,U0FE5		; ja
+	CP	80H
+	JR	C,U0F6E		; kein Token
+	PUSH	HL
+	LD	C,80H		; Bit 7 setzen: Regelverstoss
+	CP	8BH		; RESTORE?
+	JR	NZ,U0F8C
+	CALL	TCHAR		; naechstes gueltiges Zeichen holen
+	JR	U0FD9
+	;
+U0F8C:	CP	0B1H		; AND?
+	JR	Z,U0F98
+	CP	0B2H		; OR?
+	JR	Z,U0F98
+	CP	0AAH		; NOT?
+	JR	NZ,U0FBB
+	;
+; logische Operationen mit AND, OR oder NOT erfordern Klammern,
+; wenn Vergleichsoperatioren benutzt werden
+U0F98:	CALL	TCHAR		; naechstes gueltiges Zeichen holen
+	CP	'('		; folgt eine Klammer?
+	JR	Z,U0FA6
+U0F9F:	LD	A,(HL)
+	INC	HL
+	CALL	U10F7		; Test auf Verleichsoperatoren
+	JR	NZ,U0F9F	; weitersuchen bis Zeilenende
+U0FA6:	POP	HL
+	PUSH	HL
+U0FA8:	DEC	HL
+	LD	A,(HL)
+	CP	' '
+	JR	Z,U0FA8		; Leerzeichen uebergehen
+	CP	')'
+	JR	Z,U0FD9		; Klammer zu gefunden, OK
+U0FB2:	DEC	HL
+	LD	A,(HL)
+	CALL	U10FB
+	JR	NZ,U0FB2
+	JR	U0FD9
+	;
+; auf NEXT muss Variable folgen
+U0FBB:	CP	82H		; NEXT?
+	JR	NZ,U0FCF
+	CALL	TCHAR		; naechstes gueltiges Zeichen holen
+	CP	'Z'+1
+	JR	NC,U0FCC	; auf NEXT folgt keine Variable
+	CP	'A'
+	JR	C,U0FCC		; auf NEXT folgt keine Variable
+	LD	A,1
+U0FCC:	DEC	A		; Z=1, wenn Variable folgt
+	JR	U0FD9
+	;
+U0FCF:	LD	HL,U1E13	; Tabelle mit erlaubten Token
+	LD	BC,U1E41-U1E13	; Anzahl
+	CPIR
+	LD	C,40H		; Bit 6 setzen: unerlaubter Befehl
+U0FD9:	POP	HL
+	JR	Z,U0F6E
+	LD	A,(FLAGS)
+	OR	C		; Bit 6 oder 7 setzen
+	LD	(FLAGS),A
+	JR	U0F6E
+	;
+;Zeichenkette oder REM
+U0FE5:	LD	C,A		; C = '"'
+U0FE6:	INC	HL		; naechstes Zeichen
+	LD	A,(HL)		; holen
+	CP	C		; Ende der Zeichenkette?
+	JR	Z,U0F6E		; ja, weiter testen
+	OR	A		; 0 = Zeilenende
+	JR	NZ,U0FE6	; ansonsten weiter nach dem Ende der Zeichenkette suchen
+	;
+;Zeilenende
+U0FEE:	LD	A,(FLAGS)
+	BIT	6,A
+	JR	NZ,U0FFC	; -> unerlaubter Befehl
+	BIT	7,A
+	JR	NZ,U1001	; -> Regelverstoss
+	JP	U0F55
+	;
+U0FFC:	LD	HL,U1C2D	; Text 'unerlaubter BASICODE-Befehl!'
+	JR	U1004
+	;
+U1001:	LD	HL,U1C4A	; Text 'Regelverstoss!'
+U1004:	PUSH	DE
+	CALL	U1AE5		; anzeigen
+	POP	DE
+	CALL	ZPOIT
+	PUSH	DE
+	INC	HL
+	INC	HL
+	JP	EDITO2+3
+	;
+; BASIC-Programm fertig geprueft, Beginn der Konvertierung BASIC -> ASCII
+U1012:	PUSH	HL		; Ende BASIC-Programm
+	LD	DE,Z1000+1	; Beginn BASIC-Programm
+	OR	A		; CY=0
+	SBC	HL,DE
+	LD	C,L
+	LD	B,H		; BC = Laenge BASIC-Programm
+	LD	HL,-48		; 48 Byte fuer Stack frei halten
+	ADD	HL,SP
+	EX	DE,HL		; DE = 48 Byte vor Stack
+	POP	HL		; Ende BASIC-Programm
+	LDDR			; BASIC-Programm hier hin verschieben
+	LD	(Z1000),BC	; kein BASIC-Programm mehr im Speicher
+	EX	DE,HL		; HL = Beginn des verschobenen BASIC-Programms
+	LD	BC,U21F3	; Hier ASCII-File ablegen
+	LD	(SVARPT),BC	; Programmende+1
+	LD	A,CR
+	CALL	U1A8A		; Zeichen im ASCII-File ablegen und malen
+U1034:	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(U0041),DE	; Zeilennummer ablegen
+	XOR	A		; Zaehler fuer Zeilenlaenge
+	EX	AF,AF'
+	PUSH	HL		; Zeiger auf BASIC-Programm
+	PUSH	BC		; Zeiger auf ASCII-File
+	XOR	A
+	LD	B,98H
+	CALL	SGN1		; Zeilennummer
+	CALL	NUMKON		; konvertieren
+	POP	BC
+U104A:	CALL	TCHAR		; naechstes gueltiges Zeichen holen
+	OR	A
+	JR	Z,U1055
+	CALL	U1A8A		; Zeichen im ASCII-File ablegen und malen
+	JR	U104A
+	;
+U1055:	POP	HL
+	LD	A,(FLAGS)
+	OR	40H		; Bit 6 setzen (unerlaubter Befehl)
+	LD	(FLAGS),A
+U105E:	LD	E,C
+	LD	D,B
+	CALL	CPREG		; Vergleiche Register DE mit HL
+	JP	C,U0ECA		; 'Speichergrenze erreicht!'
+	CALL	TCHAR		; naechstes gueltiges Zeichen holen
+	OR	A
+	JR	Z,U10BD
+	CP	'"'
+	JR	Z,U10AC		; Zeichenkette
+	CP	80H
+	JR	NC,U1079	; Token
+	CALL	U1A8A		; Zeichen im ASCII-File ablegen und malen
+	JR	U105E
+	;
+; Token decodieren
+U1079:	CP	0BFH		; LN?
+	LD	DE,U1D0B	; Umwandeln in LOG
+	JR	Z,U109F
+	PUSH	AF
+	PUSH	HL
+	PUSH	BC
+	LD	HL,U1E3C	; GOSUB, GOTO, STEP, THEN, TO
+	LD	BC,5		; 5 Token testen
+	CPIR
+	JR	NZ,U1097	; keiner der 5 Token
+	PUSH	AF
+	LD	A,(FLAGS)
+	OR	40H		; Bit 6 setzen (unerlaubter Befehl)
+	LD	(FLAGS),A
+	POP	AF
+U1097:	CALL	LIST11		; Token aufloesen
+	POP	BC
+	POP	HL
+U109C:	CALL	U1A8A		; Zeichen im ASCII-File ablegen und malen
+U109F:	LD	A,(DE)
+	INC	DE
+	OR	A
+	JP	P,U109C
+	POP	AF
+	CP	8EH	; REM?
+	JR	NZ,U105E	; weiter im Text
+	JR	U10AF		; den Rest nach REM einfach kopieren
+	;
+U10AC:	CALL	U1A8A		; Zeichen im ASCII-File ablegen und malen
+U10AF:	LD	E,A
+U10B0:	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	Z,U10BD		; Zeilenende
+	CALL	U1A8A		; Zeichen im ASCII-File ablegen und malen
+	CP	E
+	JR	NZ,U10B0
+	JR	U105E
+	;
+U10BD:	EX	AF,AF'
+	CP	61		; Zeile darf max. 60 Zeichen lang sein
+	JR	C,U10D8		; OK
+	PUSH	BC
+	PUSH	HL
+	LD	HL,U1CF2	; Zeile
+	CALL	TEXTOE
+	LD	HL,(U0041)	; Zeilennummer
+	CALL	NUMBO
+	LD	HL,U1CF9	; ist zu lang.
+	CALL	TEXTOE
+	POP	HL
+	POP	BC
+U10D8:	LD	A,CR
+	CALL	U1A8A		; Zeichen im ASCII-File ablegen und malen
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	OR	(HL)		; Programmende?
+	JP	NZ,U1034	; weiter konvertieren
+	LD	(U0033),BC	; Ende ASCII-File
+	LD	HL,(SVARPT)	; Programmende+1
+	LD	(U0031),HL	; Beginn ASCII-File
+	LD	A,(FLAGS)
+	OR	2		; Bit 1 setzen: ASCII-File im Speicher
+	LD	(FLAGS),A
+	RET
+;
+; Setze Regelverstoss, wenn Vergleichsoperatoren ohne Klammer benutzt wurden
+;
+U10F7:	CP	0B4H	; =
+	JR	Z,U110A
+U10FB:	CP	':'
+	RET	Z		; Z=1, neuer Befehl
+	OR	A
+	RET	Z		; Z=1, Zeilenende
+	CP	80H
+	RET	C		; C=1, ASCII-Zeichen (kein Token)
+	CP	0B3H	; >
+	JR	Z,U110A
+	CP	0B5H	; <
+	RET	NZ
+U110A:	LD	A,(FLAGS)
+	OR	C		; Regelverstoss setzen (Klammer fehlt)
+	LD	(FLAGS),A
+	XOR	A		; Z=1
+	RET
+;
+; *K - Listen ASCII-File
+;
+STAR_K:	LD	A,(FLAGS)
+	AND	2		; Bit 1 gesetzt?
+	JP	Z,U1ADC		; kein ASCII-File im Speicher!
+	CALL	LCREG
+	LD	HL,(U0031)	; Beginn ASCII-File
+	LD	DE,(U0033)	; Ende ASCII-File
+U1125:	LD	A,(HL)
+	INC	HL
+	CP	CR
+	JR	Z,U113A		; neue Zeile
+	CP	20H
+	JR	NC,U1131
+	LD	A,'#'		; statt Steuerzeichen ein '#' anzeigen
+U1131:	CALL	CO		; Zeichen anzeigen
+U1134:	CALL	CPREG		; Vergleiche Register DE mit HL
+	JR	NZ,U1125	; weiter bis zum Ende ASCII-File
+	RET
+	;
+U113A:	PUSH	HL
+	CALL	CRWDY2		; Anzeige CR, LF, Dummyzeichen
+	CALL	LIST9		; Stop nach vorgegebener Zeilenanzahl
+	POP	HL
+	CALL	U0613		; Taste gedrueckt?
+	CP	3
+	JR	NZ,U1134	; weiter anzeigen
+	RET
+;
+; GOTO 20	Programmstart, System-Reset, Loeschen aller Variablen
+; PE:	A	Groesse des Stringraums in Byte (256 Byte werden mindestens benutzt)
+;	CC(0)	Vordergrundfarbe
+;	CC(1)	Hintergrundfarbe
+; PA:	HO=39	Anzahl Textspalten-1
+;	VE=31	Anzahl Textzeilen-1
+;	HG=320	Bildschirmbreite in Pixeln
+;	VG=240	Bildschirmhoehe in Piceln
+;	CN=0	Voreinstellung = zeichnen (nicht loeschen	
+;	IN=0
+;	IN$=""
+;	SR$=""
+;
+GO20:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	AF
+	EX	AF,AF'
+	EXX
+	LD	A,(FLAGS)
+	AND	0F4H		; Bit 0, 1 und 3 ruecksetzen
+	LD	(FLAGS),A
+; 02.01.2024: hier Loeschen des Bildschirms erforderlich? - ja.
+	CALL	CLS		; Bildschirm loeschen
+	XOR	A
+	CALL	RESTO
+	LD	BC,4100H	; A
+	CALL	U167B		; Wert der Variable A nach HL holen
+	LD	DE,256		; Mindestgroesse
+	CALL	CPREG		; Vergleiche Register DE mit HL
+	JR	C,U116E		; Mindestgroesse 256 benutzen
+	EX	DE,HL		; Wert der Variablen A benutzen
+U116E:	XOR	A		; Z=1
+	CALL	CLEAR+8		; Variablen loeschen
+	LD	HL,U1E41	; vordefinierte Variablen
+	LD	DE,(SVARPT)	; Programmende+1
+	LD	BC,U1E71-U1E41
+	LDIR			; Variablen mit Startwerten belegen
+	EX	DE,HL		; HL=Ende der belegten Variablen
+	LD	(DVARPT),HL
+	LD	(FSLPTR),HL	; erste freie Adresse hinter den Variablen
+	CALL	U05C5		; Fenster auf volle Groesse stellen
+	EXX
+	EX	AF,AF'
+	PUSH	AF
+	PUSH	BC
+	PUSH	DE
+	JP	(HL)
+;
+; GOSUB 110	Setzen des Cursors an eine bestimmte Position
+;		Uebergabe der Position in den Variablen HO und VE
+;
+GO110:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	LD	BC,'VE'
+	CALL	U167B		; Wert der Variable VE nach HL holen
+	LD	A,L
+	CP	32		; ausserhalb?
+	JR	C,U11A3		; nein
+	BIT	7,A
+	LD	A,31		; Position ganz unten
+	JR	Z,U11A3
+	XOR	A		; Position ganz oben
+U11A3:	PUSH	AF
+	LD	BC,'HO'
+	CALL	U167B		; Wert der Variable HO nach HL holen
+	LD	A,L
+	CP	40		; ausserhalb?
+	JR	C,U11B6		; nein
+	BIT	7,A
+	LD	A,39		; Position ganz rechts
+	JR	Z,U11B6
+	XOR	A		; Position ganz links
+U11B6:	LD	L,A
+	POP	AF
+	LD	H,A
+;	JP	U05E1		; Cursor auf HL setzen
+;
+; Cursor auf HL setzen
+;	
+U05E1:	PUSH	BC
+	CALL	IRMON		; veraendert BC-Register
+	LD	(CURSO),HL
+	JR	U05F1
+;
+; aktuelle Cursorposition nach HL
+;	
+U05EA:	PUSH	BC
+	CALL	IRMON		; veraendert BC-Register
+	LD	HL,(CURSO)
+U05F1:	CALL	IRMOFF
+	POP	BC		; veraendert BC-Register
+	RET
+;
+; GOSUB 120	Ermittlung der Position des Cursors
+;		Rueckgabe der Position in den Variablen HO und VE
+;
+GO120:	CALL	U05EA		; Cursorposition nach HL
+	PUSH	HL
+	LD	BC,'HO'
+	CALL	DIM7		; Adresse der Variable HO nach DE holen
+	POP	HL
+	PUSH	HL
+	LD	A,L		; A=Spalte
+	CALL	U11D3		; Wert in Variable eintragen
+	LD	BC,'VE'
+	CALL	DIM7		; Adresse der Variable VE nach DE holen
+	POP	AF		; A=Zeile
+U11D3:	LD	L,A
+	LD	H,0		; HL=Wert
+	JP	U1671		; in Variable eintragen
+;
+; GOSUB 200	Auslesen eines Tastendrucks
+;		Rueckgabe des Zeichens in der Variablen IN$
+;		Rueckgabe einer leeren Variable IN$, wenn keine Taste gedrueckt wurde
+;
+GO200:	CALL	U0613		; Taste gedrueckt?
+	JR	U11E7
+;
+; GOSUB 210	Warten auf einen Tastendruck
+;		Rueckgabe des Zeichens in der Variablen IN$
+;
+GO210:	CALL	U062C		; Eingabe ein Zeichen
+U11E7:	CP	3
+	JR	NZ,U11F0
+	POP	HL
+	POP	HL
+	JP	STOP
+	;
+U11F0:	OR	A
+	PUSH	AF
+	LD	BC,'IN'+80H	; IN$
+	CALL	DIM7		; Adresse der Variable IN$ nach DE holen
+	EX	DE,HL
+	LD	(HL),0
+	POP	AF
+	LD	E,A
+	JR	Z,U123F
+	CP	1
+	JR	NZ,U121A
+	LD	E,7FH
+	PUSH	HL
+	CALL	U05EA		; Cursorposition nach HL
+	INC	L
+	DEC	L
+	POP	HL
+	JR	Z,U123F
+	LD	(HL),3
+	INC	HL
+	INC	HL
+	LD	BC,U1D08
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	JR	U123F
+	;
+U121A:	LD	A,1
+	LD	(HL),A
+	INC	HL
+	INC	HL
+	PUSH	DE
+	PUSH	HL
+	CALL	STROP
+	POP	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EX	DE,HL
+	POP	DE
+	LD	(HL),E
+	LD	A,E
+	CP	8
+	JR	C,U1238
+	CP	0CH
+	JR	NC,U1238
+	ADD	14H
+	JR	U123E
+	;
+U1238:	CP	60H		; Kleinbuchstabe?
+	JR	C,U123F		; nein
+	SUB	20H		; in Grossbuchstabe wandeln
+U123E:	LD	E,A
+U123F:	LD	D,0
+	PUSH	DE
+	LD	BC,'IN'
+	CALL	DIM7		; Adresse der Variable IN nach DE holen
+	POP	HL
+	JP	U1671		; in Variable 'IN' eintragen
+;
+; Cursorposition ausserhalb bei GOSUB 220
+;
+U124C:	XOR	A
+	JR	U123E
+;
+; GOSUB 220	Auslesen eines Zeichens vom Bildschirm
+;		Uebergeben der Bildschirmposition in den Variablen HO und VE
+;		Rueckgeben des Zeichens als numerischer Wert in der Variablen IN
+;
+GO220:	LD	BC,'VE'
+	CALL	U167B		; Wert der Variable VE nach HL holen
+	LD	A,L
+	CP	20H
+	JR	NC,U124C	; VE ausserhalb!
+	PUSH	AF
+	LD	BC,'HO'
+	CALL	U167B		; Wert der Variable HO nach HL holen
+	LD	A,L
+	CP	40
+	POP	HL		; H=Zeile
+	JR	NC,U124C	; HO ausserhalb!
+	LD	L,A		; L=Spalte
+	CALL	U0654		; Zeichen aus VRAM nach Register A lesen
+	LD	E,A
+	CP	0C9H		; C9 im VRAM ???
+	JR	NZ,U1238	; nein, upcase
+	JR	U123E		; in Variable IN uebergeben
+;
+; GOSUB 260	Ermittlung einer Zufallszahl zwischen 0 und 1
+;		Rueckgabe der Zahl in der Variablen RV
+;
+GO260:	XOR	A
+	INC	A
+	CALL	RND+9
+	LD	A,(WRA1+1)
+	LD	E,A
+	LD	A,R
+	ADD	E
+	LD	(WRA1+1),A
+	LD	BC,'RV'
+U1286:	CALL	DIM7		; Adresse der Variable nach DE holen
+	EX	DE,HL
+	JP	OPTRAN
+;
+; GOSUB 270	 Ermittlung der Groesse des freien Speichers
+;		 Rueckgabe des Wertes in der Variablen FR
+;
+GO270:	XOR	A
+	LD	(DATYPE),A
+	CALL	FRE
+	CALL	U12AF
+	CALL	OPARST
+	LD	A,1
+	LD	(DATYPE),A
+	CALL	FRE
+	CALL	U12AF
+	POP	BC
+	POP	DE
+	CALL	ADD5
+	LD	BC,'FR'
+	JR	U1286
+;
+U12AF:	CALL	TSGNM
+	RET	P
+	LD	BC,9100H	; 65536
+	LD	DE,0
+	JP	ADD5
+;
+; GOSUB 300	Umwandlung eines numerischen Wertes in einen String
+;		Uebergabe des numerischen Wertes in der Variablen SR
+;		Rueckgabe des Strings in der Variablen SR$
+;
+GO300:	LD	BC,'SR'
+	CALL	DIM7		; Adresse der Variable SR nach DE holen
+	EX	DE,HL
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	CALL	NUMKON
+	INC	HL
+	PUSH	HL
+	XOR	A
+	LD	C,A
+	CPIR
+	LD	A,C
+	CPL
+U12DF:	ADD	2		; wird auch als Zeiger auf UOT1=2 genutzt!
+	CALL	STROP
+	SUB	2
+	INC	DE
+	INC	DE
+	LD	C,A
+	LD	B,0
+	POP	HL
+	PUSH	HL
+	PUSH	DE
+	LDIR
+	POP	HL
+	POP	DE
+	LD	C,A
+	LD	A,(DE)
+	DEC	DE
+	CP	2EH
+	JR	NZ,U12FD
+	INC	C
+	DEC	HL
+	LD	(HL),30H
+U12FD:	LD	A,(DE)
+	CP	2DH
+	JR	NZ,U1305
+	INC	C
+	DEC	HL
+	LD	(HL),A
+U1305:	PUSH	BC
+	PUSH	HL
+	LD	BC,'SR'+80H	; SR$
+	CALL	DIM7		; Adresse der Variable SR$ nach DE holen
+	POP	HL
+	POP	BC
+	EX	DE,HL
+	LD	(HL),C
+	INC	HL
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	RET
+;
+; GOSUB 310	Umwandlung eines numerischen Wertes in einen String
+;		Uebergabe des numerischen Wertes in der Variablen SR
+;		Uebergabe einer festen Stringlänge in der Variablen CT
+;		Uebergabe der Position des Dezimalpunkts in der Variablen CN
+;		Rueckgabe des Strings in der Variablen SR$
+;
+GO310:	CALL	GETCN		; CN holen
+	LD	BC,'CT'
+	CALL	U167B		; Wert der Variable CT nach HL holen
+	LD	A,L
+	LD	H,L
+	LD	(XPOS2),HL
+	PUSH	AF
+	CALL	STROP
+	PUSH	DE
+	LD	BC,'SR'+80H	; SR$
+	CALL	DIM7		; Adresse der Variable SR$ nach DE holen
+	POP	HL
+	LD	(U0041),HL
+	EX	DE,HL
+	POP	AF
+	LD	(HL),A
+	INC	HL
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	PUSH	DE
+	LD	BC,'SR'
+	CALL	DIM7		; Adresse der Variable SR nach DE holen
+	EX	DE,HL
+	PUSH	HL
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	CALL	TSGNM
+	POP	HL
+	EX	(SP),HL
+	LD	A,(XPOS2)
+	JR	NC,U135B
+	LD	(HL),2DH
+	INC	HL
+	SUB	2
+	JP	C,U1400
+	INC	A
+U135B:	LD	B,A
+	LD	A,(CN)		; CN
+	LD	C,A
+	OR	A
+	JR	Z,U1364
+	INC	C
+U1364:	INC	C
+	LD	A,B
+	SUB	C
+	JP	C,U1400
+	INC	A
+	LD	(XPOS2),A
+	EX	(SP),HL
+	PUSH	AF
+	PUSH	HL
+	CALL	U1412
+	POP	HL
+	CALL	OPLAD
+	CALL	DIV1
+	CALL	ABS
+	LD	A,20H
+	OR	A
+	EX	AF,AF'
+	LD	A,(CN)		; CN
+	LD	C,A
+	POP	AF
+	ADD	C
+	LD	C,A
+	LD	B,0
+	PUSH	BC
+	CALL	OPARST
+	CALL	U1412
+	LD	BC,8000H	; 0.5
+	LD	DE,0
+	CALL	DIV1
+	POP	BC
+	POP	DE
+	CALL	ADD5
+	POP	BC
+	POP	HL
+	LD	A,(WRA1+3)
+	CP	81H
+	JR	NC,U1401
+U13A9:	PUSH	BC
+	LD	A,(XPOS2)
+	CP	B
+	JR	NZ,U13B3
+	LD	(HL),'.'
+	INC	HL
+U13B3:	DEC	A
+	CP	B
+	JR	NZ,U13BB
+	EX	AF,AF'
+	LD	A,'0'
+	EX	AF,AF'
+U13BB:	PUSH	HL
+	LD	BC,8420H	; 10
+	LD	DE,0
+	CALL	MUL1
+	CALL	OPARST
+	CALL	EPRVL3		; Ausdruck berechnen -> DE
+	LD	A,E
+	LD	(YPOS2),A
+	CALL	POS1
+	CALL	ABS1
+	POP	BC
+	POP	DE
+	CALL	ADD5
+	LD	A,(YPOS2)
+	OR	A
+	POP	HL
+	JR	Z,U13EA
+	LD	E,'0'
+	ADD	E
+	LD	(HL),A
+	EX	AF,AF'
+	LD	A,E
+	SCF
+	JR	U13EC
+	;
+U13EA:	EX	AF,AF'
+	LD	(HL),A
+U13EC:	EX	AF,AF'
+	INC	HL
+	POP	BC
+	INC	B
+	LD	A,B
+	CP	C
+	JR	NZ,U13A9
+	EX	AF,AF'
+	RET	C
+	LD	HL,(U0041)
+	LD	A,(HL)
+	CP	'-'
+	RET	NZ
+	LD	(HL),' '
+	RET
+	;
+U1400:	POP	HL
+U1401:	LD	HL,(U0041)
+	LD	A,(YPOS2)
+	INC	A
+	LD	B,A
+	LD	A,'*'
+	JR	U140F
+	;
+U140D:	LD	(HL),A
+	INC	HL
+U140F:	DJNZ	U140D
+	RET
+;
+U1412:	CALL	POS1
+	LD	BC,8420H	; 10
+	LD	DE,0
+	JP	EXPO+2
+;
+; GOSUB 330	Umwandlung aller Kleinbuchstaben in einem String in Grossbuchstaben
+;		Uebergabe und Rueckgabe des Strings in der Variablen SR$
+;
+GO330:	LD	BC,'SR'+80H	; SR$
+	CALL	DIM7		; Adresse der Variable SR$ nach DE holen
+	EX	DE,HL
+	LD	A,(HL)
+	INC	HL
+	INC	HL
+	PUSH	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	EX	(SP),HL
+	PUSH	HL
+	CALL	STROP
+	POP	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	POP	HL
+	LD	B,A
+	INC	B
+	JR	U1449
+	;
+U143B:	LD	A,(HL)
+	CP	60H
+	JR	C,U1446
+	CP	7FH
+	JR	NC,U1446
+	SUB	20H
+U1446:	LD	(DE),A
+	INC	HL
+	INC	DE
+U1449:	DJNZ	U143B
+	RET
+;
+; GOSUB 350	Ausgabe eines Strings auf dem Drucker
+;		Uebergabe des Strings in der Variablen SR$
+;
+GO350:	CALL	U1691		; Zeichenkette SR$ holen
+	EX	DE,HL		; Adresse in HL
+	JR	U1457
+	;
+U1452:	LD	A,(HL)		; Zeichen holen
+	INC	HL
+	CALL	PRINT		; Zeichen an Drucker senden
+U1457:	DJNZ	U1452
+	RET
+;
+; GOSUB 360	Ausgabe eines Zeilenumbruchs auf dem Drucker
+;
+GO360:	LD	HL,U1D05	; CR,LF
+	LD	B,3		; 2+1
+	JR	U1457
+;
+; GOSUB 400	Ausgabe eines Tones
+;		Uebergabe der Lautstaerke, Dauer und Tonhoehe
+;		 in den Variablen SV, SD und SP
+;
+GO400:	LD	BC,'SV'		; Sound Volume (Lautstaerke) 0-15
+	CALL	U167B		; Wert der Variable SV nach HL holen
+	PUSH	HL
+	CALL	U15DA		; Zeitdauer SD
+	LD	BC,'SP'		; Sound Pitch (Tonhoehe)
+	CALL	U167B		; Wert der Variable SP nach HL holen
+	LD	A,L
+	POP	BC
+	LD	HL,(01ECH)	; Interrupt CTC Kanal 2 - Tondauer, Blinkfrequenz
+	PUSH	HL		; merken
+	LD	HL,ISRC2	; interne ISR fuer CTC2
+	LD	(01ECH),HL	; jetzt aktivieren
+	CALL	U0677
+	POP	HL
+	LD	(01ECH),HL	; urspruengliche ISR
+	RET
+;
+; GOSUB 450	Warten einer bestimmten Zeit auf einen Tastendruck
+;		Uebergabe der Dauer in der Variablen SD (in 100ms-Einheiten)
+;
+GO450:	CALL	U15DA		; Zeitdauer
+	CALL	NZ,U14A7
+	PUSH	AF
+	PUSH	DE
+	LD	A,H
+	LD	B,L
+	CALL	FRE3
+	CALL	U12AF
+	LD	HL,WRA1+3
+	LD	A,(HL)
+	SUB	2
+	JR	NC,U149E
+	XOR	A
+U149E:	LD	(HL),A
+	POP	HL
+	CALL	OPTRAN
+	POP	AF
+	JP	U11E7
+;
+U14A7:	LD	HL,(01ECH)	; Interrupt CTC Kanal 2 - Tondauer, Blinkfrequenz
+	LD	(U003F),HL	; Originalwert hier merken
+	LD	HL,ISRC2
+	LD	(01ECH),HL	; interne ISR fuer CTC2
+	LD	A,3
+	OUT	(CTC0),A
+	LD	A,0A7H
+	OUT	(CTC2),A
+	LD	A,0ABH
+	OUT	(CTC2),A
+U14BF:	LD	HL,(U004A)
+	LD	A,H
+	OR	L
+	JR	Z,U14CB
+	CALL	U0613		; Taste gedrueckt?
+	JR	Z,U14BF
+U14CB:	PUSH	HL
+	LD	HL,(U003F)	; gemerkte ISR
+	LD	(01ECH),HL	; Interrupt CTC Kanal 2 - Tondauer, Blinkfrequenz
+	POP	HL
+	RET
+;
+; GOSUB 500	Oeffnen einer Datei
+;		Uebergabe des Namens in der Variablen NF$
+;		Festlegung eines Datei-Identifiers in der Variablen NF
+;
+GO500:	CALL	IRMON
+	LD	HL,0B6D8H	; VRAM-Adresse Bild 0, letzte Zeile
+	LD	DE,U0000
+	LD	BC,40		; gesamte Zeile
+	LDIR			; Inhalt der Bildschirmzeile in Puffer kopieren
+	CALL	IRMOFF
+	CALL	U1656		; Offset gemaess NF holen nach HL und B
+	PUSH	BC		; B=NF (0-7)
+	LD	C,B
+	CALL	U164E		; Kanal bereits geoeffnet?
+	JP	C,U1668		; ja, Fehler
+	LD	A,C		; C=NF
+	CP	4
+	LD	A,(U0045)
+	JR	C,U14ED		; NF = 0..3
+	AND	0F0H		; ein anderer Kanal aus 4-7 geoeffnet?
+	DB	11H	; LD DE,0FE6H
+U14ED:	AND	0FH		; ein anderer Kanal aus 0-3 geoeffnet?
+	JP	NZ,U1668	; ja, Fehler
+	PUSH	HL		; Kanal-Offset
+if DEV
+	RES	0,C		; gleiches Device bei Lesen/Schreiben
+	LD	A,C
+	OR	A		; BASICODE?
+	CALL	NZ,DEVICE	; nein, DEVICE einstellen
+	POP	HL
+	JP	C,U1668		; Fehler bei DEVICE-Auswahl
+	PUSH	HL
+endif
+	LD	BC,'NF'+80H	; NF$
+	CALL	DIM7		; Adresse der Variable NF$ nach DE holen
+	PUSH	DE
+	LD	HL,FNAME	; Dateiname hier ablegen fuer MBIN/MBOUT
+	LD	E,L
+	LD	D,H
+	INC	DE
+; 28.12.2023:
+; Dateinamen fuer MBIN/MBOUT vorbereiten, dazu 3x Dateityp, 8x Dateiname
+	LD	(HL),'D'+80H	; Dateityp .DDD
+	LD	BC,2		; 3 Zeichen
+	LDIR			; kopieren
+	INC	HL
+	INC	DE
+	LD	(HL),' '
+	LD	C,7		; 8 Zeichen (B ist noch 0 vom letzten LDIR)
+	LDIR			; 8x mit Leerzeichen vorbelegen
+;	INC	HL		; abschliessende 0 nicht mehr erforderlich
+;	LD	(HL),C		; Ende-0 anhaengen
+
+	POP	HL		; HL = NF$
+	LD	C,(HL)		; BC = Laenge der Zeichenkette
+	INC	HL
+;	LD	B,(HL)		; B ist immer 0, noch vom letzten LDIR
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = Beginn der Zeichenkette
+	LD	A,C
+	OR	A
+	JR	Z,U1518		; Laenge = 0
+	CP	8
+	JR	C,U1517		; Laenge < 8
+	LD	C,8		; Laenge auf max. 8 begrenzen
+U1517:	LD	HL,FNAME+3	; Dateiname
+	EX	DE,HL
+	LDIR			; Dateiname dorthin kopieren
+U1518:	POP	HL		; Kanal-Offset (0, 2, 4 .. 14)
+	LD	DE,U1E71	; Sprungverteiler zum Oeffnen einer Datei
+	CALL	U1648		; Datei oeffnen
+	POP	BC
+	JP	C,U1669		; Fehler
+	LD	A,(U0045)
+	LD	C,A
+	INC	B
+	XOR	A
+	SCF
+U152A:	RLA
+	DJNZ	U152A
+	OR	C
+	LD	(U0045),A
+	JR	U158F
+;
+; GOSUB 540	Lesen eines Strings aus einer Datei
+;		Uebergabe des Identifiers in der Variablen NF
+;		Rueckgabe des Strings in der Variablen IN$
+;
+GO540:	CALL	U1656		; Offset gemaess NF holen nach HL und B
+	BIT	0,B		; Kanal zum Schreiben geoeffnet?
+	JP	NZ,U1669	; ja, unzulaessig
+	LD	DE,U16A0	; IN$ zurueckgeben
+U153E:	CALL	U164E		; Kanal geoeffnet?
+	JP	NC,U1669	; nein, unzulaessig
+	PUSH	DE
+	LD	DE,U1E91	; Sprungverteiler Lesen/Schreiben
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; Adresse der Routine lesen
+	PUSH	DE
+	POP	IY		; und in IY eintragen fuer spaeteres CALL (IY)
+	RET
+;
+; GOSUB 560	Schreiben eines Strings in eine Datei
+;		Uebergabe des Identifiers in der Variablen NF
+;		Uebergabe des Strings in der Variablen SR$
+;
+GO560:	CALL	U1656		; Offset gemaess NF holen nach HL und B
+	BIT	0,B		; Kanal zum Lesen geoeffnet?
+	JP	Z,U1669		; ja, unzulaessig
+	LD	DE,U170A	; SR$ zurueckgeben
+	JR	U153E
+;
+; GOSUB 580	Schliessen einer Datei
+;		Uebergabe des Identifiers in der Variablen NF
+;
+GO580:	CALL	U1656		; Offset gemaess NF holen nach HL und B
+	PUSH	BC
+	CALL	U164E		; Kanal geoeffnet?
+	POP	BC
+	JP	NC,U1669	; nein, unzulaessig
+	PUSH	BC
+	INC	B
+	LD	A,(U0045)	; geoeffnete Kanaele
+U156D:	RRA
+	DJNZ	U156D
+	JP	NC,U1668	; Fehler, nicht der richtige Kanal
+	LD	DE,U1E81	; Sprungverteiler zum Schliessen einer Datei
+	CALL	U1648		; Datei schliessen
+	POP	BC
+	JP	C,U1669		; Fehler
+	LD	A,(U0045)	; geoeffnete Kanaelt
+	LD	C,A
+	INC	B
+	XOR	A		; alle Bits 0
+	SCF			; 1-Bit
+U1584:	RLA			; an die gewuenschte Stelle schieben
+	DJNZ	U1584
+	CPL			; Bit negieren
+	AND	C		; geoeffneten Kanal zuruecksetzen
+	LD	(U0045),A	; und eintragen
+	CALL	U09C8		; unterste Bildschirmzeile malen
+U158F:	LD	BC,'IN'
+	CALL	DIM7		; Adresse der Variable IN nach DE holen
+	INC	DE
+	INC	DE
+	INC	DE
+	XOR	A
+	LD	(DE),A
+	RET
+;
+; GOSUB 600	Initialisieren des Grafikmodus, Loeschen des Bildschirms
+;
+GO600:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	LD	BC,'HO'
+	CALL	U1687		; Variable 'HO' auf 0 setzen
+	LD	BC,'VE'
+	CALL	U1687		; Variable 'VE' auf 0 setzen
+	LD	HL,0
+	LD	(XPOS2),HL
+	LD	(YPOS2),HL
+	LD	(XPOS1),HL
+	LD	(YPOS1),HL
+	JP	CLS		; Bildschirm loeschen
+;
+; GOTO 950	Beenden des BASICODE-Programms
+;
+GO950:	CALL	U1ECA		; Farbe nach Variable CC einstellen
+	PUSH	HL
+	CALL	CLS		; Bildschirm loeschen
+	POP	HL
+	XOR	A		; Z=1 (BREAK IN ... nicht anzeigen)
+	CALL	U0642		; BRK/STOP aktivieren
+	JP	END0		; zurueck in BASIC-ROM
+;
+; Warteschleife fuer GOSUB 400 (Tondauer) und GOSUB 450 (Warte auf Tastendruck)
+;
+U15DA:	LD	BC,'SD'		; Sound Duration (Tondauer in 0,1s Schritten)
+	CALL	DIM7		; Adresse der Variable SD nach DE holen
+	PUSH	DE
+	EX	DE,HL
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	LD	HL,WRA1+3
+	LD	A,(HL)
+	OR	A
+	JR	Z,U15FC
+	ADD	2
+	LD	(HL),A
+	CP	90H
+	JR	C,U15FC
+	LD	BC,9180H	; -65536
+	LD	DE,0
+	CALL	ADD5
+U15FC:	CALL	EPRVL3		; Ausdruck berechnen -> DE
+	EX	DE,HL
+	LD	(U004A),HL
+	LD	A,H
+	OR	L
+	POP	DE
+	RET
+;
+; Werte der Variablen HO, VE und CN holen
+;
+U1607:	LD	BC,'HO'		; Horizontalposition
+	CALL	DIM7		; Adresse der Variable HO nach DE holen
+	EX	DE,HL
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	LD	BC,8920H
+	LD	DE,0		; 320
+	CALL	MUL1		; HO*320
+	CALL	EPRVL3		; Ausdruck berechnen -> DE
+	LD	(XPOS2),DE	; X-Position ablegen
+	LD	BC,'VE'		; Vertikalposition
+	CALL	DIM7		; Adresse der Variable VE nach DE holen
+	EX	DE,HL
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	LD	BC,8870H	; (BC=8900H waere 256)
+	LD	DE,0		; 240
+	CALL	MUL1		; VE*240
+	CALL	EPRVL3		; Ausdruck berechnen -> DE
+	LD	(YPOS2),DE	; Y-Position ablegen
+GETCN:	LD	BC,'CN'		; Farbe (Color Numerisch)
+	CALL	U167B		; Wert der Variable CN nach HL holen
+	LD	A,L
+	LD	(CN),A		; Wert von CN speichern
+	RET
+
+CALLIY:	JP	(IY)		; CALL (IY)
+CALLHL:	EQU	$-1		; CALL (HL)
+;
+; Verzweigen gemaess Sprungverteiler
+; PE:	DE = Adresse des Sprungverteilers
+;	HL = Offset (0 bei NF=0, 2 bei NF=2 usw.)
+;
+U1648:	ADD	HL,DE
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A
+	JP	(HL)
+;
+; Kanal geoeffnet?
+; PE:	B=Kanal-Nr. NF (0-7)
+;
+U164E:	INC	B		; B = 1-8
+	LD	A,(U0045)
+U1652:	RRA
+	DJNZ	U1652
+	RET
+;
+; Offset entsprechend Variable NF holen
+; PA:	HL = NF*2
+;	B = NF
+;
+U1656:	PUSH	DE
+	LD	BC,'NF'
+	CALL	U167B		; Wert der Variable NF nach HL holen
+	POP	DE
+	INC	H
+	DEC	H
+	JR	NZ,U1668	; H > 0 ist unzulaessig
+	LD	A,L
+	LD	B,L
+	ADD	HL,HL
+	CP	8
+	RET	C		; OK (NF liegt zwischen 0 und 7)
+; Fehler:
+U1668:	POP	AF		; RET-Adresse vom Stack nehmen
+U1669:	LD	A,0FFH		; Fehler setzen
+	LD	(U0043),A
+	JP	U16F9		; Variable IN zurueckmelden
+;
+; Wert einer Variable lesen
+; PE:	BC=Name der Variablen
+; PA:	HL=Zahlenwert
+;
+U167B:	CALL	DIM7		; Adresse der Variable nach DE holen
+	EX	DE,HL
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	CALL	EPRVL3		; Ausdruck berechnen -> DE
+	EX	DE,HL		; Uebergabe in HL
+	RET
+;
+; Wert einer Variable holen und Inhalt auf 0 setzen
+; PE:	BC=Name der Variablen
+;
+U1687:	CALL	DIM7		; Adresse der Variable nach DE holen
+	XOR	A
+	LD	(DE),A		; 0 eintragen
+	INC	DE
+	INC	DE
+	INC	DE
+	LD	(DE),A		; 0 eintragen
+	RET
+;
+; Zeichenkette aus SR$ holen
+;
+U1691:	LD	BC,'SR'+80H	; SR$
+	CALL	DIM7		; Adresse der Variable SR$ nach DE holen
+	EX	DE,HL
+	LD	B,(HL)		; B = Anzahl Zeichen
+	INC	B		; Laenge+1
+	INC	HL
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = Zeiger auf Zeichenkette
+	RET
+;
+; Variable IN$ zurueckgeben (aus Datei Lesen)
+;
+U16A0:	LD	BC,'IN'+80H	; IN$
+	CALL	DIM7		; Adresse der Variable IN$ nach DE holen
+	PUSH	DE
+	LD	HL,(FSLPTR)	; erste freie Adresse hinter den Variablen
+	XOR	A
+	LD	(U0043),A	; 00 = kein Fehler
+	LD	E,A
+U16AF:	PUSH	HL
+	PUSH	DE
+	CALL	CALLIY		; CALL (IY) => hier Leseroutine
+	POP	DE
+	POP	HL
+	CP	CR
+	JR	Z,U16E0
+	CP	' '
+	JR	C,U16C2
+	CP	7FH
+	JR	C,U16C9
+U16C2:	LD	A,0FFH
+	LD	(U0043),A	; FF = Fehler
+	LD	A,23H
+U16C9:	LD	(HL),A
+	INC	HL
+	PUSH	HL
+	SBC	HL,SP
+	POP	HL
+	JP	NC,OMER
+	INC	E
+	LD	A,(U0044)	; FFH = Abbruch/Fehler (0 = OK)
+	LD	D,A
+	LD	A,(U0043)
+	OR	D
+	LD	(U0043),A
+	JR	U16AF
+	;
+U16E0:	LD	A,E
+	CALL	STROP
+	POP	HL
+	LD	(HL),A
+	INC	HL
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	DEC	HL
+	DEC	HL
+	DEC	HL
+	OR	A
+	JR	Z,U16F9		; Variable IN zurueckmelden
+	LD	HL,(FSLPTR)	; erste freie Adresse hinter den Variablen
+	LD	C,A
+	LD	B,0
+	LDIR
+U16F9:	LD	BC,'IN'
+	CALL	DIM7		; Adresse der Variable IN nach DE holen
+	LD	A,(U0043)
+	INC	A
+	LD	L,A
+	LD	H,0
+	DEC	HL
+;	JP	U1671		; in Variable 'IN' eintragen
+;
+; Wert in eine Variable eintragen
+; PE:	HL=Wert
+;	DE=Adresse
+;
+U1671:	LD	A,H
+	LD	B,L
+	PUSH	DE
+	CALL	FRE3
+	POP	HL
+	JP	OPTRAN
+;
+; Variable SR$ zurueckgeben (in Datei schreiben)
+;
+U170A:	CALL	U1691		; Zeichenkette SR$ holen
+	LD	C,0		; fehlerfrei annehmen
+	JR	U171F
+	;
+U1711:	PUSH	BC
+	PUSH	DE
+	LD	A,(DE)		; Zeichen aus SR$
+	CALL	CALLIY		; CALL (IY) => hier Schreibroutine
+	POP	DE
+	POP	BC
+	LD	A,(U0044)	; FFH = Abbruch/Fehler (0 = OK)
+	OR	C
+	LD	C,A
+	INC	DE		; naechstes Zeichen
+U171F:	DJNZ	U1711		; bis Zeichenanzahl abgearbeitet ist
+	LD	A,C
+	LD	(U0043),A
+	LD	A,CR		; Zeichenkette in Datei mit CR abschliessen
+	CALL	CALLIY		; CALL (IY) => hier Schreibroutine
+	JR	U16F9		; Variable IN zurueckmelden
+;
+; Datei oeffnen (BASICODE lesen)
+; NF=0
+;
+U172D:	CALL	U178A		; Stack 1KByte nach vorn verlagern
+	RET	C		; zu wenig Speicherplatz
+	LD	HL,(U0033)	; Ende ASCII-File
+	LD	(CPOINT),HL	; als Pufferzeiger eintragen (Puffer = leer)
+	JR	U1740
+;
+; Datei Lesen (BASICODE lesen)
+; NF=0
+;
+U1739:	LD	A,(U0046)
+	CP	4
+	JR	Z,U1761
+U1740:	PUSH	AF
+	LD	DE,(U0033)	; Ende ASCII-File
+	LD	HL,(CPOINT)	; Pufferzeiger
+	CALL	CPREG		; Vergleiche Register DE mit HL
+	CALL	Z,U17F1		; Puffer leer, 1 KByte-Block einlesen
+	LD	A,(HL)
+	INC	HL
+	LD	(CPOINT),HL	; Pufferzeiger
+	LD	(U0046),A
+	CP	4
+	JR	NZ,U175F
+	LD	HL,U0043
+	SET	0,(HL)
+U175F:	POP	AF
+	RET
+	;
+U1761:	LD	HL,U0043
+	SET	0,(HL)
+	LD	A,CR
+	RET
+;
+; Datei schliessen (BASICODE schreiben)
+; NF=1
+;
+U17D7:	LD	HL,(CPOINT)	; Pufferzeiger
+	LD	DE,(U0033)	; Ende ASCII-File
+U17DE:	LD	(HL),4		; ENDE-Zeichen eintragen
+	INC	HL
+	CALL	CPREG		; Vergleiche Register DE mit HL
+	JR	NZ,U17DE	; bis Rest vom Puffer damit gefuellt ist
+	CALL	U18A2		; letzten Datenblock schreiben
+	LD	A,(U0043)
+	ADD	A
+	RET	C
+;	JP	U1769		; Datei Schliessen (BASICODE lesen)
+;
+; Datei schliessen (BASICODE lesen)
+; - 1K Pufferspeicher wird wieder freigegeben
+; NF=0
+;
+U1769:	DI
+	LD	HL,0
+	ADD	HL,SP		; HL = aktueller Stackpointer, CY=0
+	LD	DE,(U0031)	; DE = Beginn ASCII-File
+	PUSH	DE		; Begin ASCII-File
+	EX	DE,HL
+	SBC	HL,DE		; Groesse der Stack-Belegung berechnen
+	JR	C,U1787		; zu wenig Platz
+	LD	C,L
+	LD	B,H
+	POP	HL		; Beginn ASCII-File
+	LD	DE,(U0033)	; Ende ASCII-File
+	DEC	DE
+	DEC	HL
+	LDDR			; Stack-Inhalt mit nehmen
+	EX	DE,HL
+	INC	HL		; Stack an Ende verlegen
+	LD	SP,HL		; und SP neu setzen
+	DB	3EH	; LD A,0E1H (POP HL verhindern)
+U1787:	POP	HL
+	EI
+	RET
+;
+; Vorbereitung fuer Lesen bzw. Schreiben von BASICODE-Datenfile
+; - Blocknummer auf FFH setzen
+; - Stack um 1KByte nach vorn verlegen
+; PA:	CY=1	zu wenig Speicherplatz
+;
+U178A:	LD	A,0FFH
+	LD	(BLNR),A
+	DI
+	LD	HL,0
+	ADD	HL,SP
+	PUSH	HL		; aktueller Stack
+	LD	DE,-400H	; 1 KByte
+	ADD	HL,DE		; vor dem Stack
+	LD	DE,(FSLPTR)	; erste freie Adresse hinter den Variablen
+	CALL	CPREG		; Vergleiche Register DE mit HL
+	POP	BC		; aktueller Stack
+	JR	C,U17B7		; zu wenig Platz
+	LD	SP,HL		; Stack 1KByte nach vorn verlegen
+	EX	DE,HL		; neuer Stack jetzt in DE
+	PUSH	BC		; aktueller Stack
+	LD	HL,(STDPTR)	; RAM-Mindestgroesse (KC85/3=7EFF KC85/4=BEFF)
+	LD	(U0033),HL	; Ende ASCII-File
+	SBC	HL,BC		; Groesse der Stack-Belegung berechnen
+	LD	C,L
+	LD	B,H
+	POP	HL		; aktueller Stack
+	LDIR			; Stack-Inhalt mit nehmen
+	LD	(U0031),DE	; Beginn ASCII-File
+U17B7:	EI
+	RET
+;
+; Datei oeffnen (BASICODE schreiben)
+; NF=1
+;
+U17B9:	CALL	U178A		; Stack 1KByte nach vorn verlagern
+	RET	C		; zu wenig Speicherplatz
+	LD	HL,(U0031)	; Beginn ASCII-File
+	LD	(CPOINT),HL	; als Pufferzeiger setzen (Puffer = leer)
+	RET
+;
+; Datei Schreiben (BASICODE schreiben)
+; NF=1
+;
+U17C4:	LD	HL,(CPOINT)	; Pufferzeiger
+	LD	(HL),A		; Datenbyte in Puffer eintragen
+	INC	HL		; +1
+	LD	(CPOINT),HL	; Pufferzeiger neu
+	LD	DE,(U0033)	; Ende ASCII-File
+	CALL	CPREG		; Vergleiche Register DE mit HL
+	RET	NZ		; noch Platz im Puffer
+;
+; BASICODE Datenblock 1 KByte aus Puffer schreiben
+;
+U18A2:	LD	H,0		; Startwert Pruefbyte
+	EXX
+	CALL	U1919		; BASICODE Bandsusgabe vorbereiten
+	LD	A,(BLNR)
+	INC	A		; Blocknummer +1
+	LD	(BLNR),A
+	XOR	A
+	LD	(U0044),A	; Abbruch/Fehler zurueck setzen
+	CALL	VTON		; 5 Sekunden Vorton
+	LD	A,1		; 01H = STH start of header
+	CALL	BCOUT		; ein Byte schreiben
+	LD	A,(BLNR)	; Blocknummer
+	CALL	BCOUT		; ein Byte schreiben
+	LD	HL,(U0031)	; Beginn ASCII-File
+	LD	(CPOINT),HL	; Pufferzeiger
+	LD	BC,1024		; Blockgroesse = 1 KByte
+U18CA:	LD	A,(HL)		; Byte aus Puffer entnehmen
+	CALL	BCOUT		; ein Byte schreiben
+	CALL	U0622		; Taste gedrueckt?
+	JR	NZ,U18E5	; ja
+	CPI			; HL=HL+1 und BC=BC-1
+	JP	PE,U18CA	; bis BC=0
+U18D0:	LD	A,3		; Ende-Byte 03H = ETX
+	CALL	BCOUT		; ein Byte schreiben
+	CALL	BCPRO		; Pruefbyte schreiben
+	CALL	NTON		; 1 Sekunde Nachton
+	JR	BCOOLD		; umgeleitete ISR (Ausgabe) zurueckstellen
+	;
+U18E5:	LD	A,0FFH
+	LD	(U0044),A	; Abbruch/Fehler setzen
+;	JR	BCOOLD		; umgeleitete ISR (Ausgabe) zurueckstellen
+;
+; umgeleitete ISR (bei Ausgabe) wieder zurueckstellen
+;
+BCOOLD:	DI
+	LD	A,3
+	OUT	(CTC1),A
+	LD	HL,(U003F)	; gemerkter Wert fuer
+	LD	(01EAH),HL	; ISR CTC1
+	JR	BCOLD
+;
+; umgeleitete ISR (bei Eingabe) wieder zurueckstellen
+;
+BCIOLD:	DI
+	LD	HL,(U003D)	; gemerkter Wert fuer
+	LD	(01E4H),HL	; Interrupt PIO Kanal A - Kassetteneingabe
+	LD	HL,(U003F)	; gemerkter Wert fuer
+	LD	(01ECH),HL	; Interrupt CTC 2
+BCOLD:	LD	A,3
+	OUT	(CTC1),A	; CTC1 stoppen
+	OUT	(PIOAS),A	; PIO-A DI
+	IN	A,(PIOAD)
+	AND	9FH		; LED aus, Stop Recorder
+	OUT	(PIOAD),A
+	LD	A,47H
+	OUT	(CTC2),A	; CTC2 Zaehler, ZK folgt
+	OUT	(CTC2),A	; ZK
+	EI
+	LD	HL,U1B63	; Text 'Bitte Band stoppen'
+	JP	U1AE5		; anzeigen
+;
+; BASICODE-Datenblock 1 KByte einlesen in Puffer
+;
+U17F1:	LD	A,(BLNR)
+	INC	A		; erwartete Blocknummer+1
+	LD	(BLNR),A
+	XOR	A
+	LD	(U0044),A	; Abbruch/Fehler zuruecksetzen
+	CALL	U18EC		; BASICODE Bandeingabe vorbereiten
+U17FF:	CALL	BCSYN		; Synchronisation mit Frequenzmessung
+U1802:	CALL	BCIN		; ein Byte lesen
+	JR	C,U1802		; Fehler, naechstes Byte lesen
+	JR	NZ,U1851	; Taste gedrueckt
+	CP	1		; 01H = STH start of header
+	JR	Z,U1815
+	LD	HL,U1C16	; Text 'kein BASICODE-Bestand!'
+	CALL	U1AE5		; anzeigen
+	JR	U17FF		; und wiederholen
+	;
+U1815:	CALL	BCIN		; ein Byte lesen (Blocknummer)
+	JR	NZ,U1851	; Taste gedrueckt
+	LD	(U01F2),A	; Blocknummer in (IX+2) eintragen
+	LD	C,A
+	LD	A,(BLNR)	; erwartete Blocknummer
+	CP	C
+	JR	Z,U1829		; Blocknummer stimmt
+	CALL	U185D		; Anzeige gelesene und erwartete Blocknummer
+	JR	U17FF		; und wiederholen
+	;
+U1829:	LD	HL,(U0031)	; Beginn ASCII-File
+	LD	(CPOINT),HL	; Pufferzeiger
+	LD	BC,1024		; Blockgroesse = 1 KByte
+U1832:	CALL	BCIN		; ein Byte lesen
+	JR	NZ,U1851	; Taste gedrueckt
+	LD	(HL),A		; Byte in Puffer ablegen
+	CPI			; HL=HL+1 und BC=BC-1
+	JP	PE,U1832	; bis BC=0
+	CALL	BCIN		; ein Byte lesen (Ende-Byte 03H = ETX)
+				; wird nicht ueberprueft
+	CALL	BCIN		; ein Byte lesen (Check-Byte)
+	JR	NZ,U1851	; Taste gedrueckt
+	EXX
+	INC	H		; Pruefsumme von BCIN berechnet
+	DEC	H		; Pruefsumme korrekt?
+	JR	Z,U1856		; ja
+	CALL	U188B		; Lesefehler, zurueck J/N?
+	JR	Z,U17FF		; ja, wiederholen
+	JR	U1856
+	;
+U1851:	LD	A,0FFH		; Kennung fuer Abbruch/Fehler
+	LD	(U0044),A	; Abbruch eintragen
+U1856:	CALL	BCIOLD		; umgeleitete ISR (Eingabe) zurueckstellen
+	LD	HL,(U0031)	; Beginn ASCII-File
+	RET
+;
+; Anzeige der gelesenen und erwarteten Blocknummer
+;
+U185D:	LD	HL,U1BDA	; Zeichenkette "falsche Blocknummer..."
+	LD	DE,U1BEF	; hier die gelesene Blocknummer einbauen
+	LD	A,(U01F2)	; entspricht (IX+2) = gelesene Blocknummer
+	CALL	DEHEX		; in Zeichenkette einbauen
+	LD	DE,U1BFB	; hier die erwartete Blocknummer einbauen
+U186C:	LD	A,(BLNR)	; erwartete Blocknummer
+	CALL	DEHEX		; in Zeichenkette einbauen
+	JP	U1AE5		; und anzeigen
+;
+; aehnlich AHEX, aber Eintragen in Zeichenkette (DE)
+;
+DEHEX:	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	HEX1		; 1x aufrufen
+	INC	DE		; naechste Position
+	POP	AF		; und dann reinlaufen
+HEX1:	AND	0FH		; Maske
+	ADD	A,90H		; uebliche
+	DAA			; Routine
+	ADC	A,40H		; fuer die
+	DAA			; Hexausgabe
+	LD	(DE),A
+	RET
+;
+; Anzeige Lesefehler und Abfrage Wiederholung J/N?
+;
+U188B:	LD	HL,U1BB5	; Text 'Lesefehler in Block ...'
+	LD	DE,U1BCA	; hier die erwartete Blocknummer einbauen
+	CALL	U186C		; und anzeigen...
+U1894:	CALL	U062C		; Tastatureingabe abwarten
+	AND	5FH		; upcase
+	CP	'J'
+	RET	Z		; Z=1 heisst wiederholen
+	CP	'N'
+	JR	NZ,U1894
+	DEC	A		; Z=0 nicht wiederholen
+	RET
+;
+; BASICODE Bandeingabe vorbereiten
+;
+U18EC:	LD	HL,U1B50	; Text 'Bitte Band starten'
+	CALL	U1AE5		; anzeigen
+	DI
+	LD	A,83H
+	OUT	(PIOAS),A
+	LD	HL,(01E4H)	; Interrupt PIO Kanal A - Kassetteneingabe
+	LD	(U003D),HL	; hier merken
+	LD	HL,ISRPA
+	LD	(01E4H),HL	; neuer Wert
+	LD	HL,(01ECH)	; Interrupt CTC Kanal 2 - Tondauer, Blinkfrequenz
+	LD	(U003F),HL
+	LD	HL,ISRC2
+	LD	(01ECH),HL	; interne ISR fuer CTC2
+U190F:	IN	A,(PIOAD)
+	OR	40H
+	AND	0DFH
+	OUT	(PIOAD),A
+	EI
+	RET
+;
+; BASICODE Bandsusgabe vorbereiten
+;
+U1919:	LD	HL,U1B50	; Text 'Bitte Band starten'
+	CALL	U1AE5		; anzeigen
+	LD	A,3
+	OUT	(CTC2),A	; CTC2 stoppen
+	DI
+	LD	HL,(01EAH)	; Interrupt CTC Kanal 1 - Kassettenausgabe
+	LD	(U003F),HL	; hier merken
+	LD	HL,ISRC1	; neue ISR
+	LD	(01EAH),HL	; fuer CTC1 eintragen
+	XOR	A
+	LD	(U01F0),A	; (IX+0) Zeitkonstante Kassettenroutinen
+	JR	U190F
+;
+; Synchronisation mit Frequenzmessung
+; PA:	Z=0	Taste gedrueckt
+;	B'	Schwingungen fuer "1"
+;	C'	Schwingungen fuer "0"
+;	H'=0	Startwert fuer Pruefsummenberechnung
+;
+BCSYN:	EXX
+BCY1:	LD	BC,0D10H	; ca. 0.7 sek Tondauer bei 2400Hz
+BCY2:	LD	E,D
+	CALL	U0622		; Taste gedrueckt?
+	RET	NZ		; ja
+	CALL	BCBY		; eine Schwingung messen
+	LD	D,A
+	ADD	A,4
+	CP	E
+	JR	C,BCY1		; ausser Toloeranz (+5)
+	SUB	9
+	CP	E
+	JR	NC,BCY1		; ausser Toleranz (-5)
+	CPI			; wie DEC BC
+	JP	PE,BCY2		; wdh. bis BC=0
+	LD	H,B
+	LD	L,B		; HL=0
+	LD	D,B		; D=0
+BCY3:	CALL	U0622		; Taste gedrueckt?
+	RET	NZ		; ja
+	CALL	BCBY		; eine Schwingung messen
+	LD	E,A
+	ADD	HL,DE		; addieren
+	DJNZ	BCY3		; 256 Messungen addieren
+	PUSH	HL
+	LD	A,H
+	SRL	H		; /2
+	ADD	H
+	LD	B,A		; B=1.5 Schwingungen	"1"
+	SRL	H
+	ADD	H
+	LD	C,A		; C=1.75 Schwingungen	"0"
+	LD	H,0		; Startwert fuer Pruefsummenberechnung in H'
+	EXX
+	POP	HL
+	LD	A,H
+	CP	45H
+	JR	C,U1B2F
+	LD	HL,U1CC2	; Text "Ein sehr schwaches Kassetteninterface..."
+	JR	U1B32		; anzeigen
+
+U1B2F:	LD	HL,U1B76	; Text 'Ich lese BASICODE'
+U1B32:	JP	U1AE5		; anzeigen
+;
+; Nachton ausgeben, ca. 1 Sekunde
+;
+NTON:	PUSH	BC
+	LD	BC,0C012H	; ca. 1 sek
+	JR	BCTON
+;
+; Vorton ausgeben, ca. 5 Sekunden
+;
+VTON:	PUSH	BC
+	LD	BC,0C05DH	; ca. 5 Sekunden
+	LD	A,85H
+	OUT	(CTC1),A	; Zeitgeber, VT=16, ZK folgt
+	LD	A,17H		; ZK fuer 2400Hz
+	OUT	(CTC1),A
+BCTON:	LD	A,(U01F0)	; Zeitkonstante
+	OR	A
+	JR	NZ,BCTON	; warten, bis von ISR 0 eingetragen ist
+	LD	A,1
+	LD	(U01F0),A	; wieder auf 1 setzen
+	DJNZ	BCTON
+	DEC	C
+	JR	NZ,BCTON	; wiederholen
+	LD	A,0FFH
+	LD	(U01F0),A	; und noch weitere 255 Schwingungen
+	POP	BC
+	RET
+;
+; Ein Byte BASICODE lesen
+; PA:	Z=0	Taste gedrueckt
+;	CY=1	Fehler
+;
+BCIN:	EXX
+	LD	L,0
+	LD	E,L		; E=0
+BCI1:	CALL	U0622		; Taste gedrueckt?
+	RET	NZ		; ja
+	DEC	L
+	JR	Z,BCI6		; 256 mal kein Startbit gelesen
+	CALL	BCHB		; Zeit abwarten
+	LD	D,A
+	ADD	E
+	LD	E,D
+	CP	C
+	JR	C,BCI1		; kein Startbit
+	SRL	A
+	CP	C
+	JR	NC,BCI1		; kein Startbit
+	LD	E,80H
+	LD	L,0
+BCI2:	LD	A,L
+	OR	A
+	CALL	Z,BCHB		; Bit lesen
+	LD	L,0
+	CP	B
+	JR	NC,BCI5		; "0" einschieben
+	LD	D,A
+	CALL	BCHB		; Bit lesen
+	ADD	D
+	CP	C
+	JR	NC,BCI5		; "0" einschieben
+	CP	B
+	JR	C,BCI3
+	CALL	BCHB		; Bit lesen
+	ADD	A
+	JR	BCI4
+	;
+BCI3:	CALL	BCBY		; eine Schwingung messen
+BCI4:	CP	B
+	JR	C,BCI5		; "1" einschieben
+	SUB	17H
+	SRL	A
+	LD	L,A
+	SCF			; "1"
+BCI5:	RR	E		; Bit einschieben
+	JR	NC,BCI2		; 8 Bit einlesen
+	LD	A,E
+	XOR	H		; Pruefsumme berechnen in H'
+	LD	H,A
+	LD	A,E
+	XOR	80H		; Bit 7 invertieren
+	CALL	U09DD		; Zeichen in unterste Zeile malen
+	CALL	U0622		; Taste gedrueckt?
+	EXX
+	RET			; Z=0, wenn Taste gedrueckt wurde
+	;
+BCI6:	EXX
+;
+; Dateiarbeit, ungenutzte Routinen
+; NF=4..7
+;
+U09AC:	SCF			; Fehler-Kennung
+	RET
+;
+; Pruefbyte (H') ausgeben
+;
+BCPRO:	EXX
+	LD	A,H		; Pruefbyte
+	XOR	80H
+	EXX
+;
+; Datenbyte ausgeben im BASICODE-Format
+;
+BCOUT:	EXX
+	CALL	U09DD		; Zeichen malen
+	XOR	80H		; Bit 7 negieren
+	LD	C,A		; Zeichen
+	LD	B,9		; insgesamt 9 Bit mit Startbit
+	XOR	H		; Pruefsumme nebenbei mit berechnen
+	LD	H,A
+	SLA	C		; Startbit "0" einschieben
+BCO1:	LD	A,(U01F0)	; (IX+0)
+	INC	A
+	DEC	A		; CY bleibt unveraendert
+	JR	NZ,BCO1		; warten, bis 0 eingetragen ist
+	LD	A,85H
+	OUT	(CTC1),A	; neue ZK ankuendigen
+	RR	C
+	JR	NC,BCO2	; Bit 0 oder 1?
+	LD	A,17H		; ZK fuer 2400Hz
+	OUT	(CTC1),A
+	LD	A,4		; 2 Schwingungen
+	JR	BCO3
+	;
+BCO2:	LD	A,2EH		; ZK fuer 1200Hz
+	OUT	(CTC1),A
+	LD	A,2		; 1 Schwingung
+BCO3:	LD	(U01F0),A	; (IX+0)
+	DJNZ	BCO1
+BCO4:	LD	A,(U01F0)	; (IX+0)
+	OR	A
+	JR	NZ,BCO4		; warten bis 0 eingetragen ist
+	LD	A,85H
+	OUT	(CTC1),A	; neue ZK ankuendigen
+	LD	A,17H		; ZK fuer 2400Hz
+	OUT	(CTC1),A
+	LD	A,8		; 4 Schwingungen = 2 Stoppbits
+	LD	(U01F0),A
+	EXX
+	RET
+;
+; eine Schwingung messen (Addieden von 2 Halbwellen)
+;
+BCBY:	PUSH	DE
+	CALL	BCHB		; erste Halbwelle
+	LD	E,A
+	CALL	BCHB		; zweite Halbwelle
+	ADD	A,E		; addieren
+	POP	DE
+	RET
+;
+; Warten auf Flankenwechsel am PIO
+;
+BCHB:	XOR	A
+	LD	(U01F0),A	; (IX+0) auf 0 setzen
+BCHW:	IN	A,(PIOAD)
+	OUT	(PIOAD),A	; PIO freigeben
+	LD	A,(U01F0)
+	OR	A
+	JR	Z,BCHW		; Warten, bis Zeit eingetragen ist
+	RET
+;
+; Zeichen im ASCII-Speicher ablegen und auf Bildschirm malen
+;	
+U1A8A:	PUSH	AF		; Zeichen
+	LD	A,(FLAGS)
+	BIT	6,A		; unerlaubter Befehl?
+	JR	Z,U1AA3
+	AND	0BFH		; Bit 6 ruecksetzen
+	LD	(FLAGS),A
+	DEC	BC
+	LD	A,(BC)		; letztes Zeichen
+	INC	BC
+	CP	':'		; war das ein Doppelpunkt?
+	JR	Z,U1AA3
+	LD	A,' '		; danach immer ein Leerzeichen
+	CALL	U1AA4		; eintragen, dann reinlaufen
+U1AA3:	POP	AF
+U1AA4:	LD	(BC),A		; Zeichen in ASCII-File schreiben
+	INC	BC		; Zeiger weiter ruecken
+IF KC3
+	EX	AF,AF'
+	INC	A		; Zeichen zaehlen
+	PUSH	AF		; A' retten (weil OS/pi bei IRMON/OF A' veraendert)
+	EX	AF,AF'
+	CALL	U09DD		; Zeichen malen
+	EX	AF,AF'
+	POP	AF		; A' regenerieren
+	EX	AF,AF'
+	RET
+ELSE
+	EX	AF,AF'
+	INC	A		; Zeichen zaehlen
+	EX	AF,AF'
+	JP	U09DD		; Zeichen malen
+ENDIF
+
+;
+; Test: ASCII-File und BASIC-Programm im Speicher?
+;
+U1AB5:	LD	HL,Z1000	; Anfang BASIC-Programm
+;	LD	D,A		; ???
+	LD	E,(HL)
+	INC	HL
+	LD	A,(HL)
+	DEC	HL
+	OR	E
+;	LD	A,D		; ???
+	LD	A,1		; A=1 (BASIC-Programm im Speicher)
+	JR	NZ,U1AC4
+	DEC	A		; A=0 (kein BASIC-Programm im Speicher)
+U1AC4:	LD	C,A
+	LD	A,(FLAGS)
+	AND	2		; Bi1 1: ASCII-File im Speicher?
+	JR	Z,U1ADA		; nein
+	LD	HL,(U0031)	; Beginn ASCII-File
+	LD	DE,(SVARPT)	; BASIC-Programmende+1
+	CALL	CPREG		; Vergleiche Register DE mit HL
+	JR	C,U1ADA		; BASIC-Programm hat ASCII ueberschrieben!
+	SET	1,C		; ASCII-File im Speicher
+U1ADA:	LD	A,C
+	RET
+	
+U1ADC:	LD	HL,U1C59	; Text 'kein ASCII-File im Speicher!'
+	CALL	U1AE5		; anzeigen
+	JP	SECST		; RESTART BASIC-Interpreter
+;
+; Anzeige 'Speicher voll'
+;
+U0ECA:	LD	HL,U1B88	; Text 'Speichergrenze erreicht!'
+;	JP	U1AE5		; anzeigen
+;
+; Zeichenkette anzeigen, welche in (HL) uebergeben wird
+; Das erste Byte gibt dabei die Anzahl der folgenden Zeichen an
+;
+U1AE5:	PUSH	HL
+	LD	HL,(CULINO)	; aktuelle Zeilennummer
+	INC	HL
+	LD	A,H
+	OR	L		; Zeilennummer=0?
+	POP	HL
+	JR	NZ,U1AFA	; wir befinden und im Programm
+; im Direktmode normal anzeigen
+	LD	B,(HL)		; Anzahl
+U1AF0:	INC	HL
+	LD	A,(HL)		; Zeichen
+	CALL	CO		; anzeigen
+	DJNZ	U1AF0
+	JP	CRWDY2		; Anzeige CR, LF, Dummyzeichen
+; im Programmmode auf untere Zeile malen
+U1AFA:	CALL	U09AE		; IRM-Adresse auf links/unten einstellen
+	LD	B,(HL)		; Anzahl
+	LD	C,B
+U1AFF:	INC	HL
+	LD	A,(HL)		; Zeichen
+	CALL	U09DD		; in unterste Zeile malen
+	DJNZ	U1AFF
+	LD	A,28H
+	SUB	C
+	LD	B,A
+	LD	A,20H
+U1B0C:	CALL	U09DD		; Zeichen malen
+	DJNZ	U1B0C
+	RET
+;
+; ISR PIO-A (Kassetteneingabe)
+;
+ISRPA:	PUSH	AF
+	IN	A,(CTC2)	; aktueller Zaehlerstand
+	NEG
+	LD	(U01F0),A	; Ablage der Zeit auf (IX+0)
+	LD	A,7
+	OUT	(CTC2),A	; CTC ruecksetzen, neue ZK
+	LD	A,0FCH
+	OUT	(CTC2),A	; ZK laden
+	IN	A,(PIOAD)
+	XOR	20H		; LED ein/aus
+	OUT	(PIOAD),A
+IRET:	POP	AF
+	EI
+	RETI
+;
+; ISR CTC Kanal 1 (Kassettenausgabe)
+; (IX+0) decrementieren
+;
+ISRC1:	PUSH	AF
+	LD	A,(U01F0)	; schneller als DEC (IX+0)
+	DEC	A		; 18 statt 23 Takte
+	LD	(U01F0),A	; (IX+0)
+	JR	IRET		; POP AF, EI, RETI
+;
+; ISR CTC Kanal 2 (Ton)-Dauer und Kassetteneingabe
+;
+ISRC2:	PUSH	AF
+	PUSH	HL
+	LD	HL,(U004A)	; Zaehler
+	DEC	HL		; decrementieren
+	LD	(U004A),HL	; und zurueckschreiben
+	LD	A,H
+	OR	L		; Zaehler=0?
+	JR	NZ,ISRCO	; nein
+	LD	A,3
+	OUT	(CTC1),A	; CTC1 stoppen
+	LD	A,47H
+	OUT	(CTC2),A	; CTC2 neu starten
+	OUT	(CTC2),A	; mit dieser Zeitkonstante
+ISRCO:	POP	HL
+	JR	IRET		; POP AF, EI, RETI
+;
+; 02.01.2024: Kopie einer Tastaturtabelle direkt hier im Programm
+; diese KTAB deaktiviert STOP- und BRK-Taste
+;
+KTAB2:	DB	'Ww'		;		00 01
+	DB	'Aa'		;		02 03
+	DB	'2"'		;		04 05
+	DB	8,19H		; CUL		06 07
+	DB	10H,0CH		; HOME		08 09
+	DB	'-='		;		0A 0B
+	DB	0F2H,0F8H	; F2		0C 0D
+	DB	'Yy'		;		0E 0F	
+	DB	'Ee'		;		10 11
+	DB	'Ss'		;		12 13
+	DB	'3#'		;		14 15
+	DB	'^]'		;		16 17
+	DB	1,0FH		; CLR		18 19
+	DB	':*'		;		1A 1B
+	DB	0F3H,0F9H	; F3		1C 1D
+	DB	'Xx'		;		1E 1F
+	DB	'Tt'		;		20 21
+	DB	'Ff'		;		22 23
+	DB	'5%'		;		24 25
+	DB	'Pp'		;		26 27
+	DB	1FH,2		; DEL		28 29
+	DB	'0',40H		;		2A 2B
+	DB	0F5H,0FBH	; F5		2C 2D
+	DB	'Vv'		;		2E 2F
+	DB	'Uu'		;		30 31
+	DB	'Hh'		;		32 33
+	DB	'7',27H		; 7 / Apostroph	34 35
+	DB	'Oo'		;		36 37
+	DB	1AH,14H		; INS		38 39
+	DB	'9)'		;		3A 3B
+	DB	0,0		; BRK		3C 3D
+	DB	'Nn'		;		3E 3F
+	DB	'Ii'		;		40 41
+	DB	'Jj'		;		42 43
+	DB	'8('		;		44 45
+	DB	' ['		; SPC		46 47
+	DB	'Kk'		;		48 49
+	DB	',<'		;		4A 4B
+IF KC3
+	DB	0,0		; STOP		4C 4D
+ELSE
+	DB	0,ESC		; STOP		4C 4D
+ENDIF
+	DB	'Mm'		;		4E 4F
+	DB	'Zz'		;		50 51
+	DB	'Gg'		;		52 53
+	DB	'6&'		;		54 55
+	DB	1CH,1DH		; LIST/RUN	56 57
+	DB	'Ll'		;		58 59
+	DB	'.>'		;		5A 5B
+	DB	0F6H,0FCH	; F6		5C 5D
+	DB	'Bb'		;		5E 5F
+	DB	'Rr'		;		60 61
+	DB	'Dd'		;		62 63
+	DB	'4$'		;		64 65
+	DB	'_\'		;		66 67
+	DB	'+;'		;		68 69
+	DB	'/?'		;		6A 6B
+	DB	0F4H,0FAH	; F4		6C 6D
+	DB	'Cc'		;		6E 6F
+	DB	'Qq'		;		70 71
+	DB	16H,5		; CAPS		72 73
+	DB	'1!'		;		74 75
+	DB	LF,12H		; CUD		76 77
+	DB	0BH,11H		; CUU		78 79
+	DB	9,18H		; CUR		7A 7B
+	DB	0F1H,0F7H	; F1		7C 7D
+	DB	CR,0EH		; ENTER		7E 7F
+;
+; Zeichenketten, jeweils erst die Anzahl der Bytes, dann der Text
+;
+U1B50:	DB	18,'Bitte Band starten'
+U1B63:	DB	18,'Bitte Band stoppen'
+U1B76:	DB	17,'Ich lese BASICODE'
+U1B88:	DB	24,'Speichergrenze erreicht!'
+U1BA1:	DB	19,'Lesefehler erkannt!'
+U1BB5:	DB	36,'Lesefehler in Block '
+U1BCA:	DB	'  ! zurueck? J/N'
+U1BDA:	DB	35,'falsche Blocknummer '
+U1BEF:	DB	'  ; erwarte '
+U1BFB:	DB	'  !'
+U1BFE:	DB	23,'kein BASICODE-Programm!'
+U1C16:	DB	22,'kein BASICODE-Bestand!'		; keine BASICODE-Datei
+U1C2D:	DB	28,'unerlaubter BASICODE-Befehl!'
+U1C4A:	DB	14,'Regelverstoss!'
+U1C59:	DB	28,'kein ASCII-File im Speicher!'
+U1C76:	DB	25,'Programm wurde geloescht!'
+U1C90:	DB	26,'kein Programm im Speicher!'
+U1CAB:	DB	22,'Bestaende geschlossen!'		; Dateien geschlossen
+U1CC2:	DB	40,'Ein sehr schwaches Kassetteninterface...'
+	DB	'Name: ',0
+U1CF2:	DB	'Zeile ',0
+U1CF9:	DB	' ist zu lang'
+U1D05:	DB	CR,LF,0
+U1D08:	DB	8,' ',8
+U1D0B:	DB	'LOG',80H
+U1D0F:	DB	' Bytes',CR,LF,0
+U1D18:	DB	CR,LF,'Programm:',0
+U1D24:	DB	'ASC-File:',0
+U1D2E:	DB	'Frei    :',0
+U1D38:	DB	CR,LF,' *  - BASICODE-Menu'
+	DB	CR,LF,' *L - Laden, Uebersetzen und Starten'
+	DB	CR,LF,' *A - Einlesen ASCII-File'
+	DB	CR,LF,' *W - Retten ASCII-File'
+	DB	CR,LF,' *T - Uebersetzen ASCII-File ==> BASIC'
+	DB	CR,LF,' *C - Uebersetzen BASIC ==> ASCII-File'
+	DB	CR,LF,' *K - Listen ASCII-File'
+	DB	CR,LF,0
+;
+; erlaubte Token im BASICODE-Programm
+;
+U1E13:	DB	0B8H	; ABS
+	DB	0B1H	; AND
+	DB	0CBH	; ASC
+	DB	0C4H	; ATN
+	DB	0CCH	; CHR$
+	DB	0C1H	; COS
+	DB	83H	; DATA
+	DB	94H	; DEF
+	DB	85H	; DIM
+	DB	0C0H	; EXP
+	DB	0A7H	; FN
+	DB	81H	; FOR
+	DB	8AH	; IF
+	DB	84H	; INPUT
+	DB	0B7H	; INT
+	DB	0CDH	; LEFT$
+	DB	0C8H	; LEN
+	DB	87H	; LET
+	DB	0BFH	; LN
+	DB	0CFH	; MID$
+	DB	0AAH	; NOT
+	DB	91H	; ON
+	DB	0B2H	; OR
+	DB	9EH	; PRINT
+	DB	86H	; READ
+	DB	8DH	; RETURN
+	DB	0CEH	; RIGHT$
+	DB	0B6H	; SGN
+	DB	0C2H	; SIN
+	DB	0BDH	; SQR
+	DB	0A5H	; TAB(
+	DB	0C3H	; TAN
+	DB	0CAH	; VAL
+	DB	0ACH	; +
+	DB	0ADH	; -
+	DB	0AEH	; *
+	DB	0AFH	; /
+	DB	0B0H	; ^
+	DB	0B3H	; >
+	DB	0B4H	; =
+	DB	0B5H	; <
+U1E3C:	DB	8CH	; GOSUB
+	DB	88H	; GOTO
+	DB	0ABH	; STEP
+	DB	0A9H	; THEN
+	DB	0A6H	; TO
+;
+; vordefinierte Variablen fuer Laufzeit
+;
+U1E41:	DW	'HO'
+	DW	0
+	DW	861CH	; 39
+
+	DW	'VE'
+	DW	0
+	DW	8578H	; 31
+
+	DW	'IN'
+	DW	0
+	DW	0	; 0
+
+	DW	'IN'+80H	; IN$
+	DW	0
+	DW	8420H	; 10
+
+	DW	'SR'+80H	; SR$
+	DW	0
+	DW	8100H	; 1
+
+	DW	'CN'
+	DW	0
+	DW	0	; 0
+
+	DW	'HG'
+	DW	0
+	DW	8920H	; 320
+
+	DW	'VG'
+	DW	0
+	DW	8870H	; 240
+;
+; Sprungverteiler zum Oeffnen einer Datei
+;
+U1E71:	DW	U172D	; NF=0	BASICODE lesen
+	DW	U17B9	; NF=1	BASICODE schreiben
+	DW	U0829	; NF=2	KC-Format lesen (TAPE)
+	DW	U0915	; NF=3	KC-Format schreiben (TAPE)
+if DEV
+	DW	U0829	; NF=4  KC-Format lesen (Diskette)
+	DW	U0915	; NF=5  KC-Format schreiben (Diskette)
+	DW	U0829	; NF=6  KC-Format lesen (USB)
+	DW	U0915	; NF=7  KC-Format schreiben (USB)
+ELSE
+	DW	U09AC	; SCF, RET (kein weiterer Treiber)
+	DW	U09AC	; SCF, RET (kein weiterer Treiber)
+	DW	U09AC	; SCF, RET (kein weiterer Treiber)
+	DW	U09AC	; SCF, RET (kein weiterer Treiber)
+ENDIF
+;
+; Sprungverteiler zum Schliessen einer Datei
+;
+U1E81:	DW	U1769	; NF=0	BASICODE lesen
+	DW	U17D7	; NF=1	BASICODE schreiben
+	DW	U0864	; NF=2	KC-Format lesen (TAPE)
+	DW	U099A	; NF=3	KC-Format schreiben (TAPE)
+IF DEV
+	DW	U0864	; NF=4	KC-Format lesen (DISK)
+	DW	U099A	; NF=5	KC-Format schreiben (DISK)
+	DW	U0864	; NF=6	KC-Format lesen (USB)
+	DW	U099A	; NF=7	KC-Format schreiben (USB)
+ELSE
+	DW	U09AC	; SCF, RET (Lesen von Diskette)
+	DW	U09AC	; SCF, RET (Schreiben auf Diskette)
+	DW	U09AC	; SCF, RET (Lesen USB)
+	DW	U09AC	; SCF, RET (Schreiben USB)
+ENDIF
+;
+; Sprungverteiler zum Datei Lesen/Schreiben (1 Byte)
+;
+U1E91:	DW	U1739	; NF=0	BASICODE lesen
+	DW	U17C4	; NF=1	BASICODE schreiben
+	DW	U0869	; NF=2	KC-Format lesen (TAPE)
+	DW	U0946	; NF=3	KC-Format schreiben (TAPE)
+IF DEV
+	DW	U0869	; NF=4	KC-Format lesen (DISK)
+	DW	U0946	; NF=5	KC-Format schreiben (DISK)
+	DW	U0869	; NF=6	KC-Format lesen (USB)
+	DW	U0946	; NF=7	KC-Format schreiben (USB)
+ELSE
+	DW	U09AC	; SCF, RET (Lesen von Diskette)
+	DW	U09AC	; SCF, RET (Schreiben auf Diskette)
+	DW	U09AC	; SCF, RET (Lesen USB)
+	DW	U09AC	; SCF, RET (Schreiben USB)
+ENDIF
+;
+; Sonderbefehle mit *
+;
+U1EA1:	DB	'LAWTCK'	; 6 Kennbuchstaben
+U1EA7:	DW	STAR_K		; *K
+	DW	STAR_C		; *C
+	DW	STAR_T		; *T
+	DW	STAR_W		; *W
+	DW	STAR_A		; *A
+	DW	STAR_L		; *L
+	DW	STAR		; * Menu
+	DW	CSAVE
+;
+; 4 Befehle, welche abgefangen werden
+;
+U1EB7:	DB	'CONT',0
+	DB	'GO',0
+	DB	'RUN',0
+	DB	'CSAVE',0
+
+	NOP
+;
+; Farbe entsprechend Variable CC(0) und CC(1) einstellen
+;
+U1ECA:	LD	HL,(FSLPTR)	; erste freie Adresse hinter den Variablen
+	LD	DE,(DVARPT)	; Liste der Feldvariablen
+	SBC	HL,DE		; Groesse des Variablenbereiches
+	LD	B,H
+	LD	C,L
+	INC	BC		; Suchbereich
+	EX	DE,HL
+U1ED7:	LD	A,'C'
+	CPIR			; 'C' im Variablenbereich suchen
+	JP	PE,U1EE0	; gefunden
+; 16.11.2023: Farbe nicht veraendern, wenn CC nicht definiert ist
+;	JR	U1F0B		; ausgesucht
+	RET			; CC nicht definiert -> Farbe nicht aendern
+	;
+U1EE0:	LD	A,(HL)		; folgendes Zeichen
+	CP	'C'		; folgt noch ein 'C'?
+	JR	Z,U1EE7		; ja
+	JR	U1ED7		; weitersuchen
+	;
+U1EE7:	; CC() gefunden
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	CALL	EPRVL3		; Ausdruck berechnen -> DE
+	LD	A,E		; Vordergrundfarbe aus CC(0)
+	SLA	A	; *2
+	SLA	A	; *4
+	SLA	A	; *8
+; 19.11.2023:
+; Grafikfarbe wird ausschliesslich ueber CAOS-Arbeitszelle FARB ermittelt,
+; keine Modifikation des Programmcodes mehr erforderlich
+;	LD	(U078C+1),A	; Routine zum Linie zeichnen
+;	LD	(U0744+1),A	; Routene zum Punkt setzen
+	PUSH	AF
+	CALL	OPKOP		; Wert in Arithmetikregister 1 laden
+	CALL	EPRVL3		; Ausdruck berechnen -> DE
+	POP	AF		; Vordergrundfarbe *8
+	CALL	IRMON
+	LD	(FARB),A	; Grafikfarbe eintragen
+	ADD	E		; + Hintergrundfarbe aus CC(1)
+;	JR	U1F0D		; Farbwert eintragen
+; 16.11.2023: Ferbwert nicht aendern, wenn CC() nicht vorhanden ist
+;U1F0B:	LD	A,DEFCOL	; Standardfarbe
+;U1F0D:
+	LD	(COLOR),A	; neuen Farbwert fuer Textfarbe eintragen
+; 17.11.2023: Farbe wird direkt aus COLOR gelesen
+;	LD	(U1F25+1),A	; Programmcode modifizieren fuer Textanzeige im Grafikmode
+	JP	IOFRET		; IRM OFF, RET
+IF KC3
+;
+; Farbe in IRM schreiben beim KC85/3
+; PE:	HL	Grafikposition
+; PA:	HL	Adresse Pixel-IRM
+;
+U20E0:	CALL	PV1		; HL=Adresse Pixel-IRM
+	DB	PADR		; DE=Adresse Farb-IRM
+	RET	C		; ausserhalb
+	PUSH	AF
+	LD	A,(COLOR)
+	LD	(DE),A
+	POP	AF
+	RET
+ELSE
+;
+; Farbebene KC85/4 schreiben
+;	
+U1F1A:	DI			; Interrupt sperren, weil (IX+1) nicht aktualisiert wird
+	LD	A,(IX+1)
+	PUSH	AF
+	SET	1,A		; Wechsel zu Farbebene
+	OUT	(84H),A		; (IX+1) wird nicht aktualisiert, deshalb DI !!!
+; 17.11.2023: Farbe wird direkt aus COLOR gelesen
+;U1F25:	LD	A,20H		; hier wird der aktuelle Farbwert eingetragen
+	LD	A,(COLOR)	; sollte genauso funktionieren
+	LD	(HL),A		; Farbwert eintragen in IRM
+	POP	AF
+	OUT	(84H),A	; Wechsel zurueck zu Pixelebene
+	EI
+	RET
+ENDIF
+;
+; Hier steht das BASIC-Programm, welches nur bei RUN sichtbar ist
+; (bzw. mit GOSUB 100:LIST)
+;
+	DB	0
+	DW	0
+
+ZEILE2:	;	2! (C) Andreas und Uwe Zierott
+	DW	ZEILE4
+	DW	2		; Zeilennummer
+	DB	9CH		; REM
+	DB	' (C) Andreas und Uwe Zierott',0
+
+ZEILE4:	;	4! Stand: 31.01.1990
+	DW	ZEILE6
+	DW	4		; Zeilennummer
+	DB	9CH		; REM
+	DB	' Stand: 31.01.1990',0
+
+ZEILE6:	;	6! Farbe von Rudolf Wenzel
+	DW	ZEILE8
+	DW	6		; Zeilennummer
+	DB	9CH		; REM
+IF KC3
+	DB	' Farbe von H. Arendt 20.07.1992',0
+ELSE
+	DB	' Farbe von Rudolf Wenzel 08.12.1992',0
+ENDIF
+
+ZEILE8:	;	8! Stand: 08.12.1992
+	DW	ZEIL10
+	DW	8		; Zeilennummer
+	DB	9CH		; REM
+IF KC3
+	DB	' KC85/3'
+ELSE
+	DB	' KC85/5'
+ENDIF
+	DB	'-Anpassung von ML 03.01.2024',0
+
+ZEIL10:	;	10 GOTO 1000
+	DW	ZEIL20
+	DW	10		; Zeilennummer
+	DB	88H		; GOTO
+	DB	'1000',0
+
+ZEIL20:	;	20 CC(0)=5:CC(1)=2:CALL*1FC4:GOTO 1010
+	;	CC(0)=7	Zeichenfarbe weiss Standard
+	;	CC(1)=0	Hintergrundfarbe schwarz Standard
+	DW	ZEI100
+	DW	20		; Zeilennummer
+	DB	'CC(0)'
+	DB	0B4H		; =
+	DB	'7:CC(1)'
+	DB	0B4H		; =
+	DB	'0:'
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO20
+	DB	':'
+	DB	88H		; GOTO
+	DB	'1010',0
+
+ZEI100:	;	100 CALL*1FA1:RETURN
+	DW	ZEI110
+	DW	100		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO100
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI110:	;	110 CALL*1FDA:RETURN
+	DW	ZEI120
+	DW	110
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO110
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI120:	;	120 CALL*11BC:RETURN
+	DW	ZEI150
+	DW	120		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO120
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI150:	;	150 CALL*1FD3:RETURN
+	DW	ZEI200
+	DW	150		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO150
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI200:	;	200 CALL*11DF:RETURN
+	DW	ZEI210
+	DW	200		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO200
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI210:	;	210 CALL*11E4:RETURN
+	DW	ZEI220
+	DW	210		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO210
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI220:	;	220 CALL*124F:RETURN
+	DW	ZEI250
+	DW	220		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO220
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI250:	;	250 CALL*6F1:RETURN
+	DW	ZEI260
+	DW	250		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO250
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI260:	;	260 CALL*1274:RETURN
+	DW	ZEI270
+	DW	260		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO260
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI270:	;	270 CALL*128D:RETURN
+	DW	ZEI280
+	DW	270		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO270
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI280:	;	280 CALL*12BC:RETURN
+	DW	ZEI300
+	DW	280		; Zeilennummer
+; 11.11.2023 GUSOB 280 Funktion deaktiviert
+; 02.01.2024 wieder aktiviert
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO280
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI300:	;	300 CALL*12CA:RETURN
+	DW	ZEI310
+	DW	300		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO300
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI310:	;	310 CALL*1317:RETURN
+	DW	ZEI330
+	DW	310		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO310
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI330:	;	330 CALL*141E:RETURN
+	DW	ZEI350
+	DW	330		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO330
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI350:	;	350 CALL*144C:RETURN
+	DW	ZEI360
+	DW	350		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO350
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI360:	;	360 CALL*145A:RETURN
+	DW	ZEI400
+	DW	360		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO360
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI400:	;	400 CALL*1461:RETURN
+	DW	ZEI450
+	DW	400		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO400
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI450:	;	450 CALL*1485:RETURN
+	DW	ZEI500
+	DW	450		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO450
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI500:	;	500 CALL*14D4:RETURN
+	DW	ZEI540
+	DW	500		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO500
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI540:	;	540 CALL*1533:RETURN
+	DW	ZEI560
+	DW	540		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO540
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI560:	;	560 CALL*1550:RETURN
+	DW	ZEI580
+	DW	560		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO560
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI580:	;	580 CALL*155D:RETURN
+	DW	ZEI600
+	DW	580		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO580
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI600:	;	600 CALL*1FA8:RETURN
+	DW	ZEI620
+	DW	600		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO600
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI620:	;	620 CALL*1FAF:RETURN
+	DW	ZEI630
+	DW	620		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO620
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI630:	;	630 CALL*1FB6:RETURN
+	DW	ZEI650
+	DW	630		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO630
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI650:	;	650 CALL*1FBD:RETURN
+	DW	ZEI950
+	DW	650		; Zeilennummer
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO650
+	DB	':'
+	DB	8DH,0		; RETURN
+
+ZEI950:	;	950 CC(0)=6:CC(1)=1:CALL*1FE1
+	;	CC(0)=6	Zeichenfarbe gelb
+	;	CC(1)=1	Hintergrundfarbe blau
+	DW	Z1000
+	DW	950		; Zeilennummer
+	DB	'CC(0)'
+	DB	0B4H		; =
+	DB	'6:CC(1)'
+	DB	0B4H		; =
+	DB	'1:'
+	DB	9DH,0AEH	; CALL*
+	ASCTXT	GO950
+	DB	0
+
+Z1000:	DW	0		; Anfang BASIC-Programm
+U21F3:				; Ende BASCICODE
+;
+; V.24-Druckertreiber (wird nach BA00H kopiert und dort ausgefuehrt)
+;
+	.phase	0BA00H
+UBA00:	CALL	UBAFE
+UBA03:	HALT
+	LD	A,(IX+13)	; Tastencode
+	OR	A		; eingetragen?
+	JR	NZ,UBA03	; nein, weiter warten
+	XOR	A
+	LD	(UBD78),A
+UBA0E:	HALT
+	LD	A,(UBD78)
+	OR	A
+	JR	Z,UBA1D
+	CALL	PV1
+	DB	KBDZ
+	JR	NC,UBA0E
+	JR	UBA23
+	;
+UBA1D:	LD	A,(IX+13)
+	OR	A
+	JR	Z,UBA0E
+UBA23:	CP	8
+	JR	NZ,UBA37
+	LD	HL,(UBD74)
+	LD	A,H
+	OR	L
+	JR	Z,UBA0E
+	DEC	HL
+	LD	(UBD74),HL
+	CALL	UBB19
+	JR	UBA0E
+	;
+UBA37:	CP	9
+	JR	NZ,UBA4F
+	LD	HL,(UBD72)
+	LD	DE,013FH
+	CALL	UBD59
+	JR	Z,UBA0E
+	INC	HL
+	LD	(UBD72),HL
+	CALL	UBB1F
+	JR	UBA0E
+	;
+UBA4F:	CP	0AH
+	JR	NZ,UBA63
+	LD	A,(UBD76)
+	CP	0FFH
+	JR	Z,UBA0E
+	INC	A
+	LD	(UBD76),A
+	CALL	UBB35
+	JR	UBA0E
+	;
+UBA63:	CP	0BH
+	JR	NZ,UBA76
+	LD	A,(UBD77)
+	OR	A
+	JR	Z,UBA0E
+	DEC	A
+	LD	(UBD77),A
+	CALL	UBB2F
+	JR	UBA0E
+	;
+UBA76:	CP	19H
+	JR	NZ,UBA90
+	LD	HL,(UBD72)
+	LD	DE,(UBD74)
+	CALL	UBD59
+	JR	Z,UBA0E
+	CALL	UBB1F
+	DEC	HL
+	LD	(UBD72),HL
+	JP	UBA0E
+	;
+UBA90:	CP	18H
+	JR	NZ,UBAAB
+	LD	HL,(UBD74)
+	LD	DE,(UBD72)
+	CALL	UBD59
+	JP	Z,UBA0E
+	CALL	UBB19
+	INC	HL
+	LD	(UBD74),HL
+	JP	UBA0E
+	;
+UBAAB:	CP	12H
+	JR	NZ,UBAC4
+	LD	A,(UBD76)
+	LD	B,A
+	LD	A,(UBD77)
+	CP	B
+	JP	Z,UBA0E
+	CALL	UBB2F
+	INC	A
+	LD	(UBD77),A
+	JP	UBA0E
+	;
+UBAC4:	CP	11H
+	JR	NZ,UBADD
+	LD	A,(UBD77)
+	LD	B,A
+	LD	A,(UBD76)
+	CP	B
+	JP	Z,UBA0E
+	CALL	UBB35
+	DEC	A
+	LD	(UBD76),A
+	JP	UBA0E
+	;
+UBADD:	CP	16H
+	JR	NZ,UBAF2
+UBAE1:	HALT
+	LD	A,(IX+13)
+	OR	A
+	JR	NZ,UBAE1
+	LD	A,(UBD78)
+	CPL
+	LD	(UBD78),A
+	JP	UBA0E
+	;
+UBAF2:	CP	0DH
+	JR	Z,UBAFE
+	CP	10H
+	CALL	Z,UBAFE
+	JP	UBA0E
+;
+UBAFE:	LD	A,(UBD77)
+	LD	B,A
+	LD	A,(UBD76)
+	LD	HL,(UBD74)
+	LD	DE,(UBD72)
+UBB0C:	CP	B
+	JR	Z,UBB15
+	CALL	UBB6F
+	DEC	A
+	JR	UBB0C
+	;
+UBB15:	CALL	UBB6F
+	RET
+;
+UBB19:	PUSH	HL
+	LD	HL,(UBD74)
+	JR	UBB23
+	;
+UBB1F:	PUSH	HL
+	LD	HL,(UBD72)
+UBB23:	LD	A,(UBD76)
+	LD	B,A
+	LD	A,(UBD77)
+	CALL	UBB45
+	POP	HL
+	RET
+
+UBB2F:	PUSH	AF
+	LD	A,(UBD77)
+	JR	UBB39
+	;
+UBB35:	PUSH	AF
+	LD	A,(UBD76)
+UBB39:	LD	HL,(UBD74)
+	LD	DE,(UBD72)
+	CALL	UBB6F
+	POP	AF
+	RET
+
+UBB45:	PUSH	DE
+	PUSH	AF
+	PUSH	HL
+	PUSH	BC
+	CALL	UBBA2
+	EX	AF,AF'
+	XOR	A
+	INC	B
+	SCF
+UBB50:	RRA
+	DJNZ	UBB50
+	EX	AF,AF'
+	POP	BC
+	POP	HL
+	PUSH	HL
+	CALL	UBBB7
+	DEC	A
+UBB5B:	INC	A
+	PUSH	HL
+	LD	H,L
+	SET	7,H
+	LD	L,A
+	EX	AF,AF'
+	PUSH	AF
+	XOR	(HL)
+	LD	(HL),A
+	POP	AF
+	EX	AF,AF'
+	POP	HL
+	CP	B
+	JR	NZ,UBB5B
+	POP	HL
+	POP	AF
+	POP	DE
+	RET
+;
+UBB6F:	PUSH	DE
+	PUSH	HL
+	PUSH	BC
+	PUSH	AF
+	EX	DE,HL
+	CALL	UBBA2
+	LD	C,B
+	EX	DE,HL
+	CALL	UBBA2
+	PUSH	HL
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	JR	Z,UBB98
+	PUSH	BC
+	LD	C,7
+	CALL	UBBC0
+	POP	BC
+	LD	B,0
+	XOR	(HL)
+UBB8D:	LD	(HL),A
+	INC	H
+	CALL	UBBD7
+	JR	Z,UBB98
+	LD	A,(HL)
+	CPL
+	JR	UBB8D
+	;
+UBB98:	CALL	UBBC0
+	XOR	(HL)
+	LD	(HL),A
+	POP	AF
+	POP	BC
+	POP	HL
+	POP	DE
+	RET
+;
+UBBA2:	PUSH	DE
+	LD	D,H
+	LD	E,L
+	CALL	UBBB7
+	PUSH	HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	EX	DE,HL
+	SBC	HL,DE
+	LD	B,L
+	POP	HL
+	LD	H,L
+	SET	7,H
+	LD	L,A
+	POP	DE
+	RET
+;
+UBBB7:	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	LD	L,H
+	LD	H,0
+	RET
+;
+UBBC0:	PUSH	BC
+	LD	A,C
+	SUB	B
+	INC	A
+	LD	C,B
+	LD	B,A
+	LD	A,C
+	OR	A
+	JR	NZ,UBBCC
+	LD	C,8
+UBBCC:	XOR	A
+UBBCD:	SCF
+	RRA
+	DJNZ	UBBCD
+	LD	B,C
+UBBD2:	RRCA
+	DJNZ	UBBD2
+	POP	BC
+	RET
+;
+UBBD7:	PUSH	HL
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	RET
+
+UBBDD:	DB	0		; hier stand schon 7F7FH drin ???
+	DB	7FH		; wird nur zu 7F7FH, wenn V.24-Modul vorhanden
+	DB	'V24I'
+	DB	1
+	LD	HL,ARGN
+	LD	DE,UBD6F
+	LD	B,(HL)		; Anzahl Argumente
+	INC	B
+	JR	UBBF2
+	;
+UBBEE:	LD	A,(HL)
+	LD	(DE),A
+	INC	DE
+	INC	HL
+UBBF2:	INC	HL
+	DJNZ	UBBEE
+;
+; V.24-Treiber initialisieren
+UBBF5:	XOR	A
+	LD	(UBD7D),A
+	LD	BC,0780H	; ab Steckplatz 7
+UBBFC:	IN	A,(C)		; Kennbyte lesen
+	CP	0EEH		; M003?
+	JR	Z,UBC0A		; ja, V.24-Modul gefunden
+	INC	B		; Suche vorwarts
+	JR	NZ,UBBFC	; bis B=0
+UBC04:	LD	A,0FFH
+	LD	(UBD7D),A
+	RET
+	;
+UBC0A:	LD	A,7FH		; Prolog
+	LD	(UBBDD),A	; aktivieren
+	LD	A,1
+	OUT	(C),A		; Modul einschalten
+	LD	L,C
+	LD	H,0B8H
+	LD	(HL),A		; und in Modultabelle eintragen
+	LD	HL,UBD33	; Druckerausgabe-Routine
+	LD	(UOUT1+1),HL
+	LD	HL,UBC6C	; Hardcopy-Routine
+	LD	(HCADR),HL
+	LD	BC,020CH	; 2 Byte an Portadresse 0CH
+	LD	HL,UBD5F	; Initialisierungsdaten
+	DI
+	OTIR			; CTC initialisieren
+	LD	BC,060AH	; 6 Byte an Portadresse 0AH
+	OTIR			; SIO initialisieren
+	EI
+	LD	HL,UBD67	; Initialisierungsdaten Drucker
+	LD	B,8
+UBC34:	PUSH	BC
+	LD	A,1
+	CALL	PV1
+	DB	WAIT
+	POP	BC
+	IN	A,(0AH)
+	BIT	2,A
+	JR	Z,UBC04
+	LD	A,(HL)
+	OUT	(8),A
+	INC	HL
+	DJNZ	UBC34
+	JP	UBD3A
+;
+UBC4B:	PUSH	AF
+UBC4C:	IN	A,(0AH)
+	BIT	2,A
+	JR	NZ,UBC62
+	LD	A,(UBD7D)
+	OR	A
+	JR	NZ,UBC6A
+	PUSH	BC
+	LD	A,1
+	CALL	PV1
+	DB	WAIT
+	POP	BC
+	JR	UBC4C
+	;
+UBC62:	XOR	A
+	LD	(UBD7D),A
+	POP	AF
+	OUT	(8),A
+	RET
+	;
+UBC6A:	POP	AF
+	RET
+;
+; Hardcopy-Routine
+;
+UBC6C:	PUSH	DE
+	CALL	UBA00
+	LD	A,(UBD6F)
+	LD	B,A
+	LD	HL,(UBD72)
+	LD	DE,(UBD74)
+	OR	A
+	SBC	HL,DE
+	INC	HL
+	EX	DE,HL
+	LD	HL,0
+UBC83:	ADD	HL,DE
+	DJNZ	UBC83
+	LD	(UBD7B),HL
+	LD	A,(UBD70)
+	LD	B,A
+	LD	A,(UBD77)
+	LD	C,A
+UBC91:	LD	HL,(UBD74)
+	LD	(UBD78),HL
+	LD	A,(IX+13)
+	CP	3
+	JR	Z,UBCE1
+	CALL	UBD16
+UBCA1:	PUSH	BC
+	LD	D,8
+	XOR	A
+	LD	(UBD7A),A
+UBCA8:	CALL	UBCE7
+	EX	AF,AF'
+	RRC	E
+	RLA
+	EX	AF,AF'
+	DJNZ	UBCB7
+	LD	A,(UBD70)
+	LD	B,A
+	INC	C
+UBCB7:	DEC	D
+	JR	NZ,UBCA8
+	LD	A,(UBD6F)
+	PUSH	BC
+	LD	B,A
+	EX	AF,AF'
+UBCC0:	CALL	UBC4B
+	DJNZ	UBCC0
+	POP	BC
+	PUSH	DE
+	LD	HL,(UBD78)
+	LD	DE,(UBD72)
+	CALL	UBD59
+	POP	DE
+	JR	Z,UBCDB
+	POP	BC
+	INC	HL
+	LD	(UBD78),HL
+	JR	UBCA1
+	;
+UBCDB:	POP	HL
+	CALL	UBD05
+	JR	Z,UBC91
+UBCE1:	POP	DE
+	RES	0,(IX+8)
+	RET
+;
+UBCE7:	PUSH	DE
+	PUSH	BC
+	CALL	UBD05
+	JR	NZ,UBCFA
+	LD	HL,(UBD78)
+	LD	A,C
+	CALL	UBBA2
+	INC	B
+	LD	A,(HL)
+UBCF7:	RLA
+	DJNZ	UBCF7
+UBCFA:	POP	BC
+	JR	C,UBD01
+	POP	DE
+	LD	E,0
+	RET
+	;
+UBD01:	POP	DE
+	LD	E,0FFH
+	RET
+;
+UBD05:	LD	A,(UBD76)
+	CP	C
+	JR	Z,UBD10
+	LD	A,(UBD7A)
+	OR	A
+	RET
+	;
+UBD10:	LD	A,0FFH
+	LD	(UBD7A),A
+	RET
+;
+UBD16:	CALL	UBD3A
+	LD	A,ESC
+	CALL	UBC4B
+	LD	A,'*'
+	CALL	UBC4B
+	LD	A,5
+	CALL	UBC4B
+	LD	HL,(UBD7B)
+	LD	A,L
+	CALL	UBC4B
+	LD	A,H
+	JP	UBC4B
+;
+; Druckerausgabe UOT1
+;
+UBD33:	CP	CR
+	JP	NZ,UBC4B
+	JR	UBD3F
+	;
+UBD3A:	LD	A,LF
+	CALL	UBC4B
+UBD3F:	PUSH	HL
+	PUSH	AF
+	PUSH	BC
+	LD	A,0DH
+	CALL	UBC4B
+	LD	A,(UBD71)
+	LD	B,A
+	INC	B
+	LD	A,20H
+	JR	UBD53
+	;
+UBD50:	CALL	UBC4B
+UBD53:	DJNZ	UBD50
+	POP	BC
+	POP	AF
+	POP	HL
+	RET
+;
+UBD59:	PUSH	HL
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	RET
+;
+; Initialisierungsdaten CTC, SIO
+;
+UBD5F:	DB	47H		; CTC Steuerbyte
+	DB	5BH		; CTC Zeitkonstante
+	DB	04H,04H		; SIO WR4
+	DB	03H,20H		; SIO WR3
+	DB	05H,6AH		; SIO WR5
+;
+; Initialisierungsdaten Drucker
+;
+UBD67:	DB	ESC,'@'		; Drucker initialisieren
+	DB	ESC,'R',0	; Zeichensatz USA
+	DB	ESC,'A',8	; Zeilenabstand 8/72 Zoll
+
+UBD6F:	DB	1
+UBD70:	DB	1
+UBD71:	DB	10
+UBD72:	DB	0F0H
+	DB	0
+UBD74:	DB	50H
+	DB	0
+UBD76:	DB	0C0H
+UBD77:	DB	40H
+UBD78:
+UBD7A	EQU	$+2
+UBD7B	EQU	$+3
+UBD7D	EQU	$+5
+	.dephase	; Ende des V.24-Treibers
+
+U256B:	DB	1DH	; Autostart BASIC-Programm
